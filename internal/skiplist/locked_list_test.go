@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package skiplist
 
 import (
@@ -13,7 +15,7 @@ func key(i int) []byte { return fmt.Appendf(nil, "key-%06d", i) }
 
 func val(i int) []byte { return fmt.Appendf(nil, "val-%06d", i) }
 
-// newFilledList inserts n keys in a deterministic shuffled order.
+// shuffled order.
 func newFilledList(t *testing.T, n int) *LockedList {
 	t.Helper()
 	l := NewLockedList(bytes.Compare, 42)
@@ -22,8 +24,6 @@ func newFilledList(t *testing.T, n int) *LockedList {
 	}
 	return l
 }
-
-// mustPanic fails the test if fn does not panic.
 
 func mustPanic(t *testing.T, fn func()) {
 	t.Helper()
@@ -127,7 +127,7 @@ func TestLockedList(t *testing.T) {
 
 	t.Run("insert at beginning, middle and end", func(t *testing.T) {
 		l := NewLockedList(bytes.Compare, 42)
-		for _, k := range []string{"b", "d", "a", "c", "e"} { // a=begin, c=middle, e=end
+		for _, k := range []string{"b", "d", "a", "c", "e"} {
 			l.Insert([]byte(k), []byte("1"))
 		}
 		checkInvariants(t, l)
@@ -153,7 +153,6 @@ func TestLockedList(t *testing.T) {
 		l.Insert([]byte("a"), []byte("1"))
 		mustPanic(t, func() { l.Insert([]byte("a"), []byte("2")) })
 
-		// If the mutex was not released, this would deadlock.
 		l.Insert([]byte("b"), []byte("2"))
 		checkInvariants(t, l)
 		if got := countLevel0(l); got != 2 {
@@ -206,7 +205,7 @@ func TestLockedIterator(t *testing.T) {
 	})
 
 	t.Run("Next, Key and Value panic on invalid iterator", func(t *testing.T) {
-		it := list.NewIterator() // never positioned
+		it := list.NewIterator()
 		mustPanic(t, func() { it.Next() })
 		mustPanic(t, func() { it.Key() })
 		mustPanic(t, func() { it.Value() })

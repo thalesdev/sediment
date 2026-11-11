@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package wal
 
 import (
@@ -5,6 +7,9 @@ import (
 	"io"
 )
 
+// Reader reads the records that a Writer wrote. It checks the checksum of each
+// fragment. At the first data that is not valid, it ends the log: Next returns
+// io.EOF and Dropped counts the bytes that it skipped.
 type Reader struct {
 	src    io.Reader
 	block  [blockSize]byte
@@ -18,12 +23,17 @@ type Reader struct {
 	err error
 }
 
+// NewReader returns a Reader that reads from r. r must be at the start of a
+// block.
 func NewReader(r io.Reader) *Reader {
 	return &Reader{
 		src: r,
 	}
 }
 
+// Next returns the next record. The slice is valid only until the next call to
+// Next. At the end of the log, and at the first data that is not valid, it
+// returns io.EOF. Any other read error is returned again by each later call.
 func (r *Reader) Next() ([]byte, error) {
 	if r.err != nil {
 		return nil, r.err
@@ -67,10 +77,15 @@ func (r *Reader) Next() ([]byte, error) {
 	}
 }
 
+// Dropped returns the number of bytes that the Reader skipped because they were
+// not valid.
 func (r *Reader) Dropped() int {
 	return r.dropped
 }
 
+// outOfSequence counts the incomplete record and the payload as dropped, ends
+// the log and returns io.EOF. Next calls it when the type of a fragment does not
+// follow the previous fragment.
 func (r *Reader) outOfSequence(payload []byte) ([]byte, error) {
 	r.dropped += len(r.record) + headerSize + len(payload)
 	r.record = r.record[:0]
@@ -78,6 +93,9 @@ func (r *Reader) outOfSequence(payload []byte) ([]byte, error) {
 	return nil, io.EOF
 }
 
+// nextFragment returns the type and the payload of the next valid fragment. When
+// the current block has no more fragments, it reads the next block. It skips
+// padding.
 func (r *Reader) nextFragment() (recordType, []byte, error) {
 	for {
 		if r.blockLen-r.blockOffset < headerSize {
@@ -129,6 +147,8 @@ func (r *Reader) nextFragment() (recordType, []byte, error) {
 	}
 }
 
+// corrupt counts the rest of the block as dropped, ends the log and returns
+// io.EOF.
 func (r *Reader) corrupt() (recordType, []byte, error) {
 	r.dropped += r.blockLen - r.blockOffset
 	r.blockOffset = r.blockLen

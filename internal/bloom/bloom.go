@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package bloom
 
 import (
@@ -15,12 +17,19 @@ const (
 	maxK    = 30
 )
 
+// Filter is a bloom filter in the LevelDB format. The last byte is the number of
+// hash functions. The other bytes are the bit array.
 type Filter []byte
 
+// k returns the number of hash functions for bitsPerKey. The result is from 1 to
+// maxK.
 func k(bitsPerKey int) int {
 	return min(max(bitsPerKey*69/100, 1), maxK)
 }
 
+// New returns a Filter that holds keys. bitsPerKey sets the size of the filter.
+// If bitsPerKey is less than 1, New uses DefaultBitsPerKey. The filter has at
+// least 64 bits.
 func New(keys [][]byte, bitsPerKey int) Filter {
 	if bitsPerKey < 1 {
 		bitsPerKey = DefaultBitsPerKey
@@ -45,6 +54,9 @@ func New(keys [][]byte, bitsPerKey int) Filter {
 	return f
 }
 
+// MayContain returns false if key is not in the filter. It returns true if key
+// can be in the filter. A true result can be wrong. A false result is always
+// correct. A filter that is shorter than 2 bytes contains no key.
 func (f Filter) MayContain(key []byte) bool {
 	if len(f) < 2 {
 		return false
@@ -67,6 +79,7 @@ func (f Filter) MayContain(key []byte) bool {
 	return true
 }
 
+// hash returns the 32-bit hash of data. It is the hash function of LevelDB.
 func hash(data []byte) uint32 {
 	h := uint32(hashSeed) ^ uint32(len(data))*hashMul
 

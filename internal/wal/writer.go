@@ -1,12 +1,18 @@
+// SPDX-License-Identifier: MIT
+
 package wal
 
 import "io"
 
+// syncWriter is a destination that can flush its data to stable storage.
 type syncWriter interface {
 	io.Writer
 	Sync() error
 }
 
+// Writer appends records to a log. It splits a record into fragments, so that no
+// fragment crosses the end of a block of blockSize bytes. After the first error,
+// each method returns that error.
 type Writer struct {
 	dst         syncWriter
 	blockOffset uint64
@@ -14,12 +20,16 @@ type Writer struct {
 	err         error
 }
 
+// NewWriter returns a Writer that writes to dst. dst must be at the start of a
+// block.
 func NewWriter(dst syncWriter) *Writer {
 	return &Writer{
 		dst: dst,
 	}
 }
 
+// AddRecord appends data as one record. It does not sync dst. Call Sync to do
+// this.
 func (w *Writer) AddRecord(data []byte) error {
 	if w.err != nil {
 		return w.err
@@ -66,6 +76,7 @@ func (w *Writer) AddRecord(data []byte) error {
 	return nil
 }
 
+// Sync flushes the data to stable storage.
 func (w *Writer) Sync() error {
 	if w.err != nil {
 		return w.err
@@ -75,6 +86,8 @@ func (w *Writer) Sync() error {
 	return err
 }
 
+// writeFragment writes the header and the payload of one fragment. The fragment
+// must fit in the rest of the current block.
 func (w *Writer) writeFragment(data []byte, recordType recordType) error {
 	if w.err != nil {
 		return w.err

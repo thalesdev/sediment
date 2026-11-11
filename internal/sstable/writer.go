@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package sstable
 
 import (
@@ -9,25 +11,32 @@ import (
 
 var errFinished = errors.New("sstable: writer already finished")
 
+// syncWriter is a destination that can flush its data to stable storage.
 type syncWriter interface {
 	io.Writer
 	Sync() error
 }
 
+// Options sets the parameters of a table. A field that has the zero value gets
+// its default value.
 type Options struct {
-	// BlockSize is the target uncompressed size of a data block. Default 4096.
+	// BlockSize is the target size of a data block before compression. The default is
+	// 4096.
 	BlockSize int
-	// RestartInterval is the number of keys between restart points. Default 16.
+	// RestartInterval is the number of keys between two restart points. The default
+	// is 16.
 	RestartInterval int
-	// BitsPerKey sizes the bloom filters. Default 10.
+	// BitsPerKey is the number of filter bits for each key. The default is 10.
 	BitsPerKey int
-	// Compare orders the keys. Default bytes.Compare.
+	// Compare orders the keys. The default is bytes.Compare.
 	Compare func(a, b []byte) int
-	// FilterKey extracts the part of a key that goes into the bloom filter.
-	// Default: the whole key.
+	// FilterKey returns the part of a key that goes into the bloom filter. The
+	// default is the whole key.
 	FilterKey func(key []byte) []byte
 }
 
+// withDefaults returns a copy of o. Each field that has the zero value gets its
+// default value.
 func (o Options) withDefaults() Options {
 	if o.BlockSize <= 0 {
 		o.BlockSize = 4096
@@ -47,9 +56,10 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// Writer writes a table to dst. Keys must be added in strictly increasing order.
-// Finish writes the filter, metaindex, index and footer, then syncs dst.
-// The Writer never closes dst.
+// Writer writes a table to dst. The caller must add keys in strictly increasing
+// order.
+// Finish writes the filter, the metaindex, the index and the footer, and then
+// syncs dst. The Writer does not close dst.
 type Writer struct {
 	dst    syncWriter
 	offset int64
@@ -67,6 +77,8 @@ type Writer struct {
 	opts Options
 }
 
+// NewWriter returns a Writer that writes a table to dst. opts sets the
+// parameters of the table.
 func NewWriter(dst syncWriter, opts Options) *Writer {
 	opts = opts.withDefaults()
 	w := &Writer{
@@ -80,7 +92,8 @@ func NewWriter(dst syncWriter, opts Options) *Writer {
 	return w
 }
 
-// Add appends a key-value pair. It panics if key is not greater than the previous key.
+// Add appends a key-value pair. It panics if key is not greater than the previous
+// key.
 func (w *Writer) Add(key, value []byte) error {
 	if w.err != nil {
 		return w.err
@@ -100,7 +113,8 @@ func (w *Writer) Add(key, value []byte) error {
 	return nil
 }
 
-// Finish completes the table and syncs dst. Further calls to Add or Finish return an error.
+// Finish completes the table and syncs dst. After Finish, a call to Add or Finish
+// returns an error.
 func (w *Writer) Finish() error {
 	if w.err != nil {
 		return w.err
@@ -138,6 +152,8 @@ func (w *Writer) Finish() error {
 	return nil
 }
 
+// flushData writes the current data block and adds an entry for it to the index.
+// It does nothing if the block is empty.
 func (w *Writer) flushData() error {
 	if w.data.empty() {
 		return nil
@@ -153,6 +169,8 @@ func (w *Writer) flushData() error {
 	return nil
 }
 
+// writeBlock writes block and its trailer to dst, and returns the handle of the
+// block. It does not compress the block.
 func (w *Writer) writeBlock(block []byte) (blockHandle, error) {
 	handle := blockHandle{offset: uint64(w.offset), size: uint64(len(block))}
 	w.trailer[0] = blockTypeNoCompression
@@ -167,6 +185,8 @@ func (w *Writer) writeBlock(block []byte) (blockHandle, error) {
 	return handle, nil
 }
 
+// write writes p to dst, adds the bytes to the offset and stores the first
+// error.
 func (w *Writer) write(p []byte) error {
 	n, err := w.dst.Write(p)
 	w.offset += int64(n)

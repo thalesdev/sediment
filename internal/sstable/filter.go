@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package sstable
 
 import (
@@ -6,6 +8,9 @@ import (
 	"github.com/thalesdev/sediment/internal/bloom"
 )
 
+// filterWriter builds the filter block. It makes one bloom filter for each range
+// of filterBase bytes of the file. The filter of a range holds the keys of the
+// data blocks that start in that range.
 type filterWriter struct {
 	bitsPerKey int
 
@@ -17,11 +22,13 @@ type filterWriter struct {
 	offsets []uint32
 }
 
+// newFilterWriter returns a filterWriter that uses bitsPerKey bits for each key.
 func newFilterWriter(bitsPerKey int) *filterWriter {
 	return &filterWriter{bitsPerKey: bitsPerKey}
 }
 
-// startBlock is called with the file offset of every data block before its keys are added.
+// startBlock must be called with the file offset of each data block, before the
+// keys of that block are added.
 func (fw *filterWriter) startBlock(blockOffset int64) {
 	index := int(uint64(blockOffset) / filterBase)
 	for index > len(fw.offsets) {
@@ -29,12 +36,13 @@ func (fw *filterWriter) startBlock(blockOffset int64) {
 	}
 }
 
+// addKey adds key to the filter of the current range.
 func (fw *filterWriter) addKey(key []byte) {
 	fw.keyStarts = append(fw.keyStarts, len(fw.keyBuf))
 	fw.keyBuf = append(fw.keyBuf, key...)
 }
 
-// finish returns the filter block. The returned slice is owned by the filterWriter.
+// finish returns the filter block. The filterWriter owns the returned slice.
 func (fw *filterWriter) finish() []byte {
 	if len(fw.keyStarts) > 0 {
 		fw.generate()
@@ -47,6 +55,8 @@ func (fw *filterWriter) finish() []byte {
 	return append(fw.buf, filterBaseLg)
 }
 
+// generate makes the filter for the keys that were added and starts the next
+// range. If no key was added, the filter is empty.
 func (fw *filterWriter) generate() {
 	fw.offsets = append(fw.offsets, uint32(len(fw.buf)))
 	if len(fw.keyStarts) == 0 {

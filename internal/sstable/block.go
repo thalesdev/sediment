@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package sstable
 
 import (
@@ -5,6 +7,9 @@ import (
 	"math/bits"
 )
 
+// blockWriter builds one block. It stores each key without the prefix that it
+// shares with the previous key. After every interval keys, it stores the full
+// key and adds a restart point.
 type blockWriter struct {
 	buf      []byte
 	lastKey  []byte
@@ -13,6 +18,8 @@ type blockWriter struct {
 	interval int
 }
 
+// newBlockWriter returns a blockWriter that adds a restart point after every
+// interval keys.
 func newBlockWriter(interval int) *blockWriter {
 	return &blockWriter{
 		interval: interval,
@@ -20,6 +27,7 @@ func newBlockWriter(interval int) *blockWriter {
 	}
 }
 
+// add appends a key-value pair. The caller must add keys in increasing order.
 func (bw *blockWriter) add(key, value []byte) {
 	var shared int
 	if bw.counter == bw.interval {
@@ -37,8 +45,8 @@ func (bw *blockWriter) add(key, value []byte) {
 	bw.buf = append(bw.buf, value...)
 }
 
-// finish appends the restart array and returns the block.
-// The returned slice is only valid until the next reset.
+// finish appends the restart array to the block and returns the block.
+// The returned slice is valid only until the next call to reset.
 func (bw *blockWriter) finish() []byte {
 	for _, offset := range bw.restarts {
 		bw.buf = binary.LittleEndian.AppendUint32(bw.buf, offset)
@@ -47,14 +55,17 @@ func (bw *blockWriter) finish() []byte {
 	return bw.buf
 }
 
+// estimatedSize returns the size in bytes that the block has after finish.
 func (bw *blockWriter) estimatedSize() int {
 	return len(bw.buf) + 4*len(bw.restarts) + 4
 }
 
+// empty returns true if no entry was added since the last reset.
 func (bw *blockWriter) empty() bool {
 	return len(bw.buf) == 0
 }
 
+// reset clears the blockWriter so that it can build a new block.
 func (bw *blockWriter) reset() {
 	bw.buf = bw.buf[:0]
 	bw.lastKey = bw.lastKey[:0]
@@ -62,6 +73,8 @@ func (bw *blockWriter) reset() {
 	bw.counter = 0
 }
 
+// commonPrefixLength returns the length of the prefix that key shares with the
+// last key that was added.
 func (bw *blockWriter) commonPrefixLength(key []byte) int {
 	maxSize := min(len(bw.lastKey), len(key))
 	var counter int

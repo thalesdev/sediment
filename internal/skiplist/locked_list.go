@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package skiplist
 
 import (
@@ -6,18 +8,23 @@ import (
 	"unsafe"
 )
 
+// node is one element of the skip list. next[i] is the next node at level i.
 type node struct {
 	key   []byte
 	value []byte
 	next  []*node
 }
 
+// LockedIterator iterates over a LockedList in key order. It takes the read lock
+// of the list for each call, and not between calls. It is not safe for
+// concurrent use.
 type LockedIterator struct {
 	list    *LockedList
 	current *node
 	err     error
 }
 
+// SeekToFirst moves the iterator to the first entry.
 func (it *LockedIterator) SeekToFirst() {
 	it.list.mu.RLock()
 	defer it.list.mu.RUnlock()
@@ -25,6 +32,8 @@ func (it *LockedIterator) SeekToFirst() {
 	it.current = it.list.head.next[0]
 }
 
+// Seek moves the iterator to the first entry with a key that is greater than or
+// equal to key.
 func (it *LockedIterator) Seek(key []byte) {
 	it.list.mu.RLock()
 	defer it.list.mu.RUnlock()
@@ -32,6 +41,8 @@ func (it *LockedIterator) Seek(key []byte) {
 	it.current = it.list.findGreaterOrEqual(key, nil)
 }
 
+// Next moves the iterator to the next entry. If there is no next entry, Valid
+// returns false. Next panics if the iterator is not valid.
 func (it *LockedIterator) Next() {
 	if it.current == nil {
 		panic("skiplist: Next called on an iterator that is not valid")
@@ -42,10 +53,14 @@ func (it *LockedIterator) Next() {
 	it.current = it.current.next[0]
 }
 
+// Valid returns true if the iterator is at an entry.
 func (it *LockedIterator) Valid() bool {
 	return it.current != nil
 }
 
+// Key returns the key of the current entry. The slice is valid only until the
+// next move of the iterator. The caller must not change it. It panics if the
+// iterator is not valid.
 func (it *LockedIterator) Key() []byte {
 	if !it.Valid() {
 		panic("skiplist: Key called on an iterator that is not valid")
@@ -53,6 +68,9 @@ func (it *LockedIterator) Key() []byte {
 	return it.current.key
 }
 
+// Value returns the value of the current entry. The slice is valid only until
+// the next move of the iterator. The caller must not change it. It panics if the
+// iterator is not valid.
 func (it *LockedIterator) Value() []byte {
 	if !it.Valid() {
 		panic("skiplist: Value called on an iterator that is not valid")
@@ -60,17 +78,20 @@ func (it *LockedIterator) Value() []byte {
 	return it.current.value
 }
 
+// Err returns the error that stopped the iteration, or nil.
 func (it *LockedIterator) Err() error {
 	return it.err
 }
 
+// Close releases the iterator. It is safe to call Close more than one time.
 func (it *LockedIterator) Close() error {
 	it.current = nil
 	it.err = nil
 	return nil
 }
 
-// LockedList is a thread-safe skip list implementation that allows concurrent insertions and iterations.
+// LockedList is a skip list. It is safe for concurrent use. Many goroutines can
+// insert keys and iterate at the same time.
 type LockedList struct {
 	head          *node
 	size          int
@@ -82,7 +103,8 @@ type LockedList struct {
 	mu sync.RWMutex
 }
 
-// NewLockedList creates a new LockedList with the given comparator and seed for the random height generator.
+// NewLockedList returns an empty LockedList. comp orders the keys. seed starts the
+// generator that selects the height of each new node.
 func NewLockedList(comp Comparator, seed uint64) *LockedList {
 	return &LockedList{
 		head: &node{
@@ -95,9 +117,10 @@ func NewLockedList(comp Comparator, seed uint64) *LockedList {
 	}
 }
 
-// findGreaterOrEqual returns the first node whose key is >= key, or nil.
-// If update is non-nil, update[i] is set to the last node visited at level i
-// (the predecessor of the result at that level).
+// findGreaterOrEqual returns the first node with a key that is greater than or
+// equal to key. It returns nil if no such node exists.
+// If update is not nil, update[i] holds the last node visited at level i. This
+// node is the predecessor of the result at that level.
 // The caller must hold l.mu.
 func (l *LockedList) findGreaterOrEqual(key []byte, update []*node) *node {
 	x := l.head
@@ -112,8 +135,8 @@ func (l *LockedList) findGreaterOrEqual(key []byte, update []*node) *node {
 	return x.next[0]
 }
 
-// Insert inserts a key-value pair into the LockedList.
-// If the key already exists, it panics.
+// Insert adds a key-value pair to the list. It panics if the key is already in the
+// list.
 func (l *LockedList) Insert(key, value []byte) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -144,8 +167,8 @@ func (l *LockedList) Insert(key, value []byte) {
 	l.size += len(key) + len(value) + int(unsafe.Sizeof(node{})) + height*int(unsafe.Sizeof(uintptr(0)))
 }
 
-// NewIterator returns a new interator for the LockedList.
-// The iterator is not safe for concurrent use.
+// NewIterator returns an iterator over the list. The iterator is not safe for
+// concurrent use.
 func (l *LockedList) NewIterator() *LockedIterator {
 	return &LockedIterator{
 		list:    l,

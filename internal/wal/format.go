@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package wal
 
 import (
@@ -15,8 +17,12 @@ const (
 	maskDelta      = 0xa282ead8
 )
 
+// recordType tells how a fragment relates to its record. A record that fits in
+// one block has one fragment of type full. A larger record has a first fragment,
+// zero or more middle fragments, and a last fragment.
 type recordType uint8
 
+// Valid returns true if rt is full, first, middle or last.
 func (rt recordType) Valid() bool {
 	return rt >= recordTypeFull && rt <= recordTypeLast
 }
@@ -29,12 +35,17 @@ const (
 	recordTypeLast   recordType = 4
 )
 
+// header is the header of a fragment. It holds the masked checksum, the length
+// of the payload and the record type.
 type header struct {
 	checksum   uint32
 	length     uint16
 	recordType recordType
 }
 
+// newHeader returns the header for a fragment that has payload data and type
+// recordType. It panics if data is larger than maxPayloadSize or if recordType
+// is not valid.
 func newHeader(data []byte, recordType recordType) *header {
 	if len(data) > maxPayloadSize {
 		panic("wal: data length exceeds max record size")
@@ -50,6 +61,8 @@ func newHeader(data []byte, recordType recordType) *header {
 	return h
 }
 
+// marshal writes the header to the first headerSize bytes of dst. It panics if
+// dst is too short.
 func (h *header) marshal(dst []byte) {
 	if len(dst) < headerSize {
 		panic("wal: destination buffer too small for header")
@@ -59,6 +72,8 @@ func (h *header) marshal(dst []byte) {
 	dst[6] = byte(h.recordType)
 }
 
+// unmarshal reads the header from the first headerSize bytes of data. It panics
+// if data is too short.
 func (h *header) unmarshal(data []byte) {
 	if len(data) < headerSize {
 		panic("wal: source buffer too small for header")
@@ -68,18 +83,21 @@ func (h *header) unmarshal(data []byte) {
 	h.recordType = recordType(data[6])
 }
 
+// computeChecksum returns the masked checksum of the record type and data.
 func (h *header) computeChecksum(data []byte) uint32 {
 	checksum := crc32.Update(0, crcTable, []byte{byte(h.recordType)})
 	checksum = crc32.Update(checksum, crcTable, data)
 	return maskChecksum(checksum)
 }
 
+// maskChecksum rotates checksum and adds maskDelta, as LevelDB does.
 func maskChecksum(checksum uint32) uint32 {
 	masked := bits.RotateLeft32(checksum, -15)
 	masked += maskDelta
 	return masked
 }
 
+// unmaskChecksum reverses maskChecksum.
 func unmaskChecksum(masked uint32) uint32 {
 	rotated := masked - maskDelta
 	return bits.RotateLeft32(rotated, 15)

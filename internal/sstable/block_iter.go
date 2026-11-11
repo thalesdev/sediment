@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package sstable
 
 import (
@@ -7,15 +9,18 @@ import (
 	"math"
 )
 
-// errCorrupt wraps every error caused by malformed table bytes.
+// errCorrupt is the base of all errors that the reader returns for invalid table
+// bytes.
 var errCorrupt = errors.New("sstable: corrupt table")
 
+// corruptf returns an error that wraps errCorrupt. It formats the message as
+// fmt.Sprintf does.
 func corruptf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", errCorrupt, fmt.Sprintf(format, args...))
 }
 
-// blockIter iterates over the entries of one block. It satisfies the same
-// contract as sediment.Iterator.
+// blockIter iterates over the entries of one block. It has the same methods and
+// rules as sediment.Iterator.
 type blockIter struct {
 	cmp func(a, b []byte) int
 
@@ -30,6 +35,8 @@ type blockIter struct {
 	err   error
 }
 
+// newBlockIter returns an iterator over block. cmp orders the keys. It returns
+// an error that wraps errCorrupt if the restart array of block is not valid.
 func newBlockIter(block []byte, cmp func(a, b []byte) int) (*blockIter, error) {
 	if len(block) < 4 {
 		return nil, corruptf("block of %d bytes has no restart count", len(block))
@@ -54,16 +61,19 @@ func newBlockIter(block []byte, cmp func(a, b []byte) int) (*blockIter, error) {
 	return it, nil
 }
 
+// restart returns the offset of restart point i.
 func (it *blockIter) restart(i int) int {
 	return int(binary.LittleEndian.Uint32(it.restarts[4*i:]))
 }
 
+// SeekToFirst moves the iterator to the first entry of the block.
 func (it *blockIter) SeekToFirst() {
 	it.seekToRestart(0)
 	it.Next()
 }
 
-// Seek positions the iterator at the first entry whose key is >= key.
+// Seek moves the iterator to the first entry with a key that is greater than or
+// equal to key.
 func (it *blockIter) Seek(key []byte) {
 	lo, hi := 0, it.n
 	for lo < hi && len(it.data) > 0 {
@@ -84,6 +94,9 @@ func (it *blockIter) Seek(key []byte) {
 	}
 }
 
+// Next moves the iterator to the next entry. If there is no next entry, Valid
+// returns false. If the entry is not valid, Next stores an error that wraps
+// errCorrupt and Valid returns false.
 func (it *blockIter) Next() {
 	if it.err != nil {
 		return
@@ -112,11 +125,21 @@ func (it *blockIter) Next() {
 	it.valid = true
 }
 
-func (it *blockIter) Valid() bool   { return it.valid }
-func (it *blockIter) Key() []byte   { return it.key }
-func (it *blockIter) Value() []byte { return it.value }
-func (it *blockIter) Err() error    { return it.err }
+// Valid returns true if the iterator is at an entry.
+func (it *blockIter) Valid() bool { return it.valid }
 
+// Key returns the key of the current entry. The slice is valid only until the
+// next move of the iterator. The caller must not change it.
+func (it *blockIter) Key() []byte { return it.key }
+
+// Value returns the value of the current entry. The slice is valid only until
+// the next move of the iterator. The caller must not change it.
+func (it *blockIter) Value() []byte { return it.value }
+
+// Err returns the error that stopped the iteration, or nil.
+func (it *blockIter) Err() error { return it.err }
+
+// Close releases the block. It is safe to call Close more than one time.
 func (it *blockIter) Close() error {
 	it.valid = false
 	it.data, it.restarts, it.key, it.value = nil, nil, nil, nil
@@ -124,6 +147,8 @@ func (it *blockIter) Close() error {
 	return nil
 }
 
+// seekToRestart sets the position to restart point i and clears the current
+// entry. The next call to Next reads the entry at that point.
 func (it *blockIter) seekToRestart(i int) {
 	it.key = it.key[:0]
 	it.value = nil
@@ -135,7 +160,7 @@ func (it *blockIter) seekToRestart(i int) {
 	}
 }
 
-// restartKey returns the key stored at restart i, without moving the iterator.
+// restartKey returns the key at restart point i. It does not move the iterator.
 func (it *blockIter) restartKey(i int) ([]byte, error) {
 	off := it.restart(i)
 	shared, unshared, _, n, err := decodeEntryHeader(it.data[off:])
@@ -152,13 +177,15 @@ func (it *blockIter) restartKey(i int) ([]byte, error) {
 	return body[:unshared], nil
 }
 
+// fail stores err and makes the iterator not valid.
 func (it *blockIter) fail(err error) {
 	it.err = err
 	it.valid = false
 }
 
-// decodeEntryHeader reads the three varints that start an entry. The lengths
-// are returned as ints that are non-negative and fit in len(src).
+// decodeEntryHeader reads the three varints at the start of an entry. It returns
+// each value as a non-negative int. The values for unshared and valueLen are not
+// larger than len(src).
 func decodeEntryHeader(src []byte) (shared, unshared, valueLen, n int, err error) {
 	var v [3]uint64
 	for i := range v {

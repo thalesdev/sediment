@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package sstable
 
 import (
@@ -12,10 +14,10 @@ import (
 
 var errClosed = errors.New("sstable: iterator closed")
 
-// Reader reads a table through an io.ReaderAt. The index and the filter are
-// loaded by Open; data blocks are read on demand and verified against their
-// checksum. A Reader is safe for concurrent use. It never closes the
-// underlying io.ReaderAt.
+// Reader reads a table through an io.ReaderAt. Open loads the index and the
+// filter. The Reader reads each data block when it is needed, and checks the
+// checksum of the block.
+// A Reader is safe for concurrent use. It does not close the io.ReaderAt.
 type Reader struct {
 	src  io.ReaderAt
 	size int64
@@ -25,9 +27,10 @@ type Reader struct {
 	filter []byte
 }
 
-// Open reads the footer, the index and the filter of the table stored in the
-// first size bytes of src. Only Compare and FilterKey of opts are used, and
-// they must match the ones the table was written with.
+// Open reads the footer, the index and the filter of the table in the first size
+// bytes of src.
+// Open uses only the Compare and FilterKey fields of opts. They must be the same
+// as the values that the writer used.
 func Open(src io.ReaderAt, size int64, opts Options) (*Reader, error) {
 	if size < footerSize {
 		return nil, corruptf("table of %d bytes is smaller than the footer", size)
@@ -63,6 +66,8 @@ func Open(src io.ReaderAt, size int64, opts Options) (*Reader, error) {
 	return r, nil
 }
 
+// loadFilter reads the metaindex block at metaHandle, and then the filter block
+// that the metaindex names. If the table has no filter, r.filter stays nil.
 func (r *Reader) loadFilter(metaHandle blockHandle) error {
 	meta, err := r.readBlock(metaHandle)
 	if err != nil {
@@ -89,8 +94,8 @@ func (r *Reader) loadFilter(metaHandle blockHandle) error {
 	return nil
 }
 
-// readBlock reads the block at h and verifies its type and checksum.
-// The returned slice is freshly allocated and owned by the caller.
+// readBlock reads the block at h and checks its type and checksum. The caller owns
+// the returned slice.
 func (r *Reader) readBlock(h blockHandle) ([]byte, error) {
 	if h.size > uint64(r.size) || h.offset > uint64(r.size)-h.size ||
 		h.offset+h.size > uint64(r.size)-blockTrailerSize {
@@ -113,8 +118,8 @@ func (r *Reader) readBlock(h blockHandle) ([]byte, error) {
 	return block, nil
 }
 
-// mayContain consults the filter of the data block starting at offset.
-// It errs on the side of reading the block whenever the filter is unusable.
+// mayContain uses the filter of the data block at blockOffset. It returns true if
+// the filter is not valid, so that the caller reads the block.
 func (r *Reader) mayContain(blockOffset uint64, key []byte) bool {
 	fb := r.filter
 	if len(fb) < 5 {
@@ -141,8 +146,9 @@ func (r *Reader) mayContain(blockOffset uint64, key []byte) bool {
 	return bloom.Filter(fb[start:limit]).MayContain(key)
 }
 
-// Get returns a copy of the value stored under key. It reads at most one data
-// block, and none when the filter rules the key out.
+// Get returns a copy of the value for key, and reports if the key exists. It reads
+// one data block at most. It reads no data block if the filter shows that the key
+// is not in the table.
 func (r *Reader) Get(key []byte) (value []byte, found bool, err error) {
 	index, err := newBlockIter(r.index, r.opts.Compare)
 	if err != nil {
@@ -177,8 +183,8 @@ func (r *Reader) Get(key []byte) (value []byte, found bool, err error) {
 	return bytes.Clone(data.Value()), true, nil
 }
 
-// Iterator walks every entry of a table in key order. It implements
-// sediment.Iterator. It is not safe for concurrent use.
+// Iterator iterates over all entries of a table in key order. It has the same
+// methods and rules as sediment.Iterator. It is not safe for concurrent use.
 type Iterator struct {
 	r      *Reader
 	index  *blockIter
@@ -187,13 +193,15 @@ type Iterator struct {
 	closed bool
 }
 
-// NewIterator returns an unpositioned iterator over the whole table.
+// NewIterator returns an iterator over the table. The iterator has no position
+// until the caller calls SeekToFirst or Seek.
 func (r *Reader) NewIterator() *Iterator {
 	it := &Iterator{r: r}
 	it.index, it.err = newBlockIter(r.index, r.opts.Compare)
 	return it
 }
 
+// SeekToFirst moves the iterator to the first entry.
 func (it *Iterator) SeekToFirst() {
 	if !it.usable() {
 		return
@@ -206,6 +214,8 @@ func (it *Iterator) SeekToFirst() {
 	it.skipEmptyForward()
 }
 
+// Seek moves the iterator to the first entry with a key that is greater than or
+// equal to key. If there is no such entry, Valid returns false.
 func (it *Iterator) Seek(key []byte) {
 	if !it.usable() {
 		return
@@ -218,6 +228,8 @@ func (it *Iterator) Seek(key []byte) {
 	it.skipEmptyForward()
 }
 
+// Next moves the iterator to the next entry. If there is no next entry, Valid
+// returns false.
 func (it *Iterator) Next() {
 	if !it.Valid() {
 		return
@@ -226,11 +238,22 @@ func (it *Iterator) Next() {
 	it.skipEmptyForward()
 }
 
-func (it *Iterator) Valid() bool   { return it.err == nil && it.data != nil && it.data.Valid() }
-func (it *Iterator) Key() []byte   { return it.data.Key() }
-func (it *Iterator) Value() []byte { return it.data.Value() }
-func (it *Iterator) Err() error    { return it.err }
+// Valid returns true if the iterator is at an entry.
+func (it *Iterator) Valid() bool { return it.err == nil && it.data != nil && it.data.Valid() }
 
+// Key returns the key of the current entry. The slice is valid only until the
+// next move of the iterator. The caller must not change it.
+func (it *Iterator) Key() []byte { return it.data.Key() }
+
+// Value returns the value of the current entry. The slice is valid only until
+// the next move of the iterator. The caller must not change it.
+func (it *Iterator) Value() []byte { return it.data.Value() }
+
+// Err returns the error that stopped the iteration, or nil.
+func (it *Iterator) Err() error { return it.err }
+
+// Close releases the iterator. It is safe to call Close more than one time.
+// After Close, the iterator is not valid and Err returns an error.
 func (it *Iterator) Close() error {
 	if it.closed {
 		return nil
@@ -240,6 +263,8 @@ func (it *Iterator) Close() error {
 	return nil
 }
 
+// usable returns true if the iterator can be used. If the iterator is closed, it
+// stores an error.
 func (it *Iterator) usable() bool {
 	if it.closed {
 		it.err = errors.Join(it.err, errClosed)
@@ -247,8 +272,8 @@ func (it *Iterator) usable() bool {
 	return it.err == nil
 }
 
-// openBlock loads the data block the index iterator points at, or clears the
-// data iterator when the index is exhausted or failed.
+// openBlock reads the data block at the index position. If the index has no more
+// entries or has an error, it sets the data iterator to nil.
 func (it *Iterator) openBlock() {
 	it.data = nil
 	if err := it.index.Err(); err != nil {
@@ -273,8 +298,8 @@ func (it *Iterator) openBlock() {
 	}
 }
 
-// skipEmptyForward moves to the next data block while the current one has no
-// entry left, surfacing any error the block iterators hit on the way.
+// skipEmptyForward moves to the next data block while the current data block has
+// no more entries. It stops at the first error.
 func (it *Iterator) skipEmptyForward() {
 	for it.err == nil && it.data != nil && !it.data.Valid() {
 		if err := it.data.Err(); err != nil {
