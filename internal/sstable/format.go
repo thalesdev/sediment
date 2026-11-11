@@ -33,11 +33,20 @@ func maskChecksum(c uint32) uint32 {
 	return bits.RotateLeft32(c, -15) + maskDelta
 }
 
+// typeBytes holds one single-byte slice for each value of a block type. It lets
+// blockChecksum read the type as a slice without an allocation.
+var typeBytes = func() (t [256][1]byte) {
+	for i := range t {
+		t[i][0] = byte(i)
+	}
+	return t
+}()
+
 // blockChecksum returns the masked CRC-32C of the block contents followed by the
 // block type.
 func blockChecksum(block []byte, blockType byte) uint32 {
 	c := crc32.Update(0, crcTable, block)
-	c = crc32.Update(c, crcTable, []byte{blockType})
+	c = crc32.Update(c, crcTable, typeBytes[blockType][:])
 	return maskChecksum(c)
 }
 

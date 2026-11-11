@@ -15,7 +15,6 @@ func key(i int) []byte { return fmt.Appendf(nil, "key-%06d", i) }
 
 func val(i int) []byte { return fmt.Appendf(nil, "val-%06d", i) }
 
-// shuffled order.
 func newFilledList(t *testing.T, n int) *LockedList {
 	t.Helper()
 	l := NewLockedList(bytes.Compare, 42)

@@ -84,8 +84,8 @@ func TestHeader(t *testing.T) {
 
 				var got header
 				got.unmarshal(buf)
-				if got != *h {
-					t.Fatalf("type %d, payload %s: got %+v, want %+v", rt, name, got, *h)
+				if got != h {
+					t.Fatalf("type %d, payload %s: got %+v, want %+v", rt, name, got, h)
 				}
 			}
 		}

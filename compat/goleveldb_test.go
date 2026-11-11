@@ -247,3 +247,28 @@ func TestOurReaderReadsGoleveldbTables(t *testing.T) {
 		})
 	}
 }
+
+func TestEmptyTables(t *testing.T) {
+	for name, write := range map[string]func(*testing.T, []kv) []byte{"ours": writeOurs, "goleveldb": writeTheirs} {
+		t.Run("Should open and iterate a table with no keys written by "+name, func(t *testing.T) {
+			b := write(t, nil)
+			r, err := sstable.Open(bytes.NewReader(b), int64(len(b)), sstable.Options{})
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			it := r.NewIterator()
+			defer it.Close()
+			it.SeekToFirst()
+			if it.Valid() || it.Err() != nil {
+				t.Fatalf("SeekToFirst: valid=%v err=%v", it.Valid(), it.Err())
+			}
+			it.Seek([]byte("a"))
+			if it.Valid() || it.Err() != nil {
+				t.Fatalf("Seek: valid=%v err=%v", it.Valid(), it.Err())
+			}
+			if _, ok, err := r.Get([]byte("a")); ok || err != nil {
+				t.Fatalf("Get: %v, %v", ok, err)
+			}
+		})
+	}
+}

@@ -29,6 +29,7 @@ type blockIter struct {
 	n        int
 
 	pos   int
+	ri    int
 	key   []byte
 	value []byte
 	valid bool
@@ -41,10 +42,11 @@ func newBlockIter(block []byte, cmp func(a, b []byte) int) (*blockIter, error) {
 	if len(block) < 4 {
 		return nil, corruptf("block of %d bytes has no restart count", len(block))
 	}
-	n := int(binary.LittleEndian.Uint32(block[len(block)-4:]))
-	if n == 0 || n > (len(block)-4)/4 {
-		return nil, corruptf("invalid restart count %d for block of %d bytes", n, len(block))
+	count := uint64(binary.LittleEndian.Uint32(block[len(block)-4:]))
+	if count == 0 || count > uint64(len(block)-4)/4 {
+		return nil, corruptf("invalid restart count %d for block of %d bytes", count, len(block))
 	}
+	n := int(count)
 	start := len(block) - 4 - 4*n
 	it := &blockIter{
 		cmp:      cmp,
@@ -52,11 +54,13 @@ func newBlockIter(block []byte, cmp func(a, b []byte) int) (*blockIter, error) {
 		restarts: block[start : len(block)-4],
 		n:        n,
 	}
+	previous := -1
 	for i := range n {
 		off := it.restart(i)
-		if len(it.data) > 0 && off >= len(it.data) || len(it.data) == 0 && off != 0 {
-			return nil, corruptf("restart %d points at %d, outside of %d bytes of entries", i, off, len(it.data))
+		if off <= previous || off >= max(len(it.data), 1) || i == 0 && off != 0 {
+			return nil, corruptf("restart %d points at %d, which is not valid for %d bytes of entries", i, off, len(it.data))
 		}
+		previous = off
 	}
 	return it, nil
 }
@@ -105,9 +109,20 @@ func (it *blockIter) Next() {
 		it.valid = false
 		return
 	}
+	for it.ri+1 < it.n && it.restart(it.ri+1) <= it.pos {
+		if it.restart(it.ri+1) < it.pos {
+			it.fail(corruptf("restart %d points inside an entry", it.ri+1))
+			return
+		}
+		it.ri++
+	}
 	shared, unshared, valueLen, n, err := decodeEntryHeader(it.data[it.pos:])
 	if err != nil {
 		it.fail(err)
+		return
+	}
+	if shared != 0 && it.restart(it.ri) == it.pos {
+		it.fail(corruptf("entry at restart point %d shares %d bytes", it.pos, shared))
 		return
 	}
 	if shared > len(it.key) {
@@ -153,11 +168,8 @@ func (it *blockIter) seekToRestart(i int) {
 	it.key = it.key[:0]
 	it.value = nil
 	it.valid = false
-	if len(it.data) > 0 {
-		it.pos = it.restart(i)
-	} else {
-		it.pos = 0
-	}
+	it.ri = i
+	it.pos = it.restart(i)
 }
 
 // restartKey returns the key at restart point i. It does not move the iterator.

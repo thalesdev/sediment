@@ -46,14 +46,14 @@ type header struct {
 // newHeader returns the header for a fragment that has payload data and type
 // recordType. It panics if data is larger than maxPayloadSize or if recordType
 // is not valid.
-func newHeader(data []byte, recordType recordType) *header {
+func newHeader(data []byte, recordType recordType) header {
 	if len(data) > maxPayloadSize {
 		panic("wal: data length exceeds max record size")
 	}
 	if !recordType.Valid() {
 		panic("wal: invalid record type")
 	}
-	h := &header{
+	h := header{
 		recordType: recordType,
 	}
 	h.checksum = h.computeChecksum(data)
@@ -83,9 +83,18 @@ func (h *header) unmarshal(data []byte) {
 	h.recordType = recordType(data[6])
 }
 
+// typeBytes holds one single-byte slice for each value of a record type. It lets
+// computeChecksum read the type as a slice without an allocation.
+var typeBytes = func() (t [256][1]byte) {
+	for i := range t {
+		t[i][0] = byte(i)
+	}
+	return t
+}()
+
 // computeChecksum returns the masked checksum of the record type and data.
 func (h *header) computeChecksum(data []byte) uint32 {
-	checksum := crc32.Update(0, crcTable, []byte{byte(h.recordType)})
+	checksum := crc32.Update(0, crcTable, typeBytes[h.recordType][:])
 	checksum = crc32.Update(checksum, crcTable, data)
 	return maskChecksum(checksum)
 }

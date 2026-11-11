@@ -84,14 +84,54 @@ func (r *Reader) loadFilter(metaHandle blockHandle) error {
 	if !it.Valid() || string(it.Key()) != filterMetaKey {
 		return nil
 	}
-	h, n := decodeBlockHandle(it.Value())
-	if n <= 0 || n != len(it.Value()) {
-		return corruptf("malformed filter handle")
+	h, err := decodeExactHandle(it.Value())
+	if err != nil {
+		return err
 	}
-	if r.filter, err = r.readBlock(h); err != nil {
+	fb, err := r.readBlock(h)
+	if err != nil {
 		return fmt.Errorf("sstable: reading filter: %w", err)
 	}
+	usable, err := checkFilter(fb)
+	if err != nil {
+		return fmt.Errorf("sstable: filter: %w", err)
+	}
+	if usable {
+		r.filter = fb
+	}
 	return nil
+}
+
+// decodeExactHandle decodes a block handle that must use all the bytes of src.
+func decodeExactHandle(src []byte) (blockHandle, error) {
+	h, n := decodeBlockHandle(src)
+	if n <= 0 || n != len(src) {
+		return blockHandle{}, corruptf("malformed block handle")
+	}
+	return h, nil
+}
+
+// checkFilter checks the structure of the filter block fb. It returns an error
+// that wraps errCorrupt if the offset array is not valid. It returns false, with
+// no error, if the filter uses a base other than filterBaseLg, because the reader
+// cannot map data blocks to the filters of such a block.
+func checkFilter(fb []byte) (usable bool, err error) {
+	if len(fb) < 5 {
+		return false, corruptf("filter block of %d bytes is too small", len(fb))
+	}
+	arrayOffset := uint64(binary.LittleEndian.Uint32(fb[len(fb)-5:]))
+	if arrayOffset > uint64(len(fb)-5) || (uint64(len(fb)-5)-arrayOffset)%4 != 0 {
+		return false, corruptf("filter offset array at %d does not fit in %d bytes", arrayOffset, len(fb))
+	}
+	previous := uint32(0)
+	for pos := int(arrayOffset); pos < len(fb)-5; pos += 4 {
+		offset := binary.LittleEndian.Uint32(fb[pos:])
+		if offset < previous || uint64(offset) > arrayOffset {
+			return false, corruptf("filter offset %d is not valid", offset)
+		}
+		previous = offset
+	}
+	return fb[len(fb)-1] == filterBaseLg, nil
 }
 
 // readBlock reads the block at h and checks its type and checksum. The caller owns
@@ -109,29 +149,26 @@ func (r *Reader) readBlock(h blockHandle) ([]byte, error) {
 		return nil, fmt.Errorf("reading block %+v: %w", h, err)
 	}
 	block, trailer := buf[:h.size], buf[h.size:]
-	if trailer[0] != blockTypeNoCompression {
-		return nil, corruptf("block %+v has unsupported type %d", h, trailer[0])
-	}
 	if got, want := binary.LittleEndian.Uint32(trailer[1:]), blockChecksum(block, trailer[0]); got != want {
 		return nil, corruptf("block %+v has checksum %#08x, want %#08x", h, got, want)
+	}
+	if trailer[0] != blockTypeNoCompression {
+		return nil, corruptf("block %+v uses compression type %d, which is not supported", h, trailer[0])
 	}
 	return block, nil
 }
 
 // mayContain uses the filter of the data block at blockOffset. It returns true if
-// the filter is not valid, so that the caller reads the block.
+// the table has no usable filter, or if the filter does not cover the block, so
+// that the caller reads the block. Open checks the structure of the filter.
 func (r *Reader) mayContain(blockOffset uint64, key []byte) bool {
 	fb := r.filter
-	if len(fb) < 5 {
+	if fb == nil {
 		return true
 	}
-	lg := fb[len(fb)-1]
 	arrayOffset := int(binary.LittleEndian.Uint32(fb[len(fb)-5:]))
-	if lg >= 64 || arrayOffset > len(fb)-5 {
-		return true
-	}
 	num := (len(fb) - 5 - arrayOffset) / 4
-	idx := blockOffset >> lg
+	idx := blockOffset >> filterBaseLg
 	if idx >= uint64(num) {
 		return true
 	}
@@ -139,9 +176,6 @@ func (r *Reader) mayContain(blockOffset uint64, key []byte) bool {
 	limit := arrayOffset
 	if int(idx)+1 < num {
 		limit = int(binary.LittleEndian.Uint32(fb[arrayOffset+4*(int(idx)+1):]))
-	}
-	if start > limit || limit > arrayOffset {
-		return true
 	}
 	return bloom.Filter(fb[start:limit]).MayContain(key)
 }
@@ -158,9 +192,9 @@ func (r *Reader) Get(key []byte) (value []byte, found bool, err error) {
 	if !index.Valid() {
 		return nil, false, index.Err()
 	}
-	h, n := decodeBlockHandle(index.Value())
-	if n <= 0 {
-		return nil, false, corruptf("malformed index handle")
+	h, err := decodeExactHandle(index.Value())
+	if err != nil {
+		return nil, false, err
 	}
 	if !r.mayContain(h.offset, r.opts.FilterKey(key)) {
 		return nil, false, nil
@@ -283,9 +317,9 @@ func (it *Iterator) openBlock() {
 	if !it.index.Valid() {
 		return
 	}
-	h, n := decodeBlockHandle(it.index.Value())
-	if n <= 0 {
-		it.err = corruptf("malformed index handle")
+	h, err := decodeExactHandle(it.index.Value())
+	if err != nil {
+		it.err = err
 		return
 	}
 	block, err := it.r.readBlock(h)
