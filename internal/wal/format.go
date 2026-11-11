@@ -18,7 +18,7 @@ const (
 type recordType uint8
 
 func (rt recordType) Valid() bool {
-	return rt >= recordTypeZero && rt <= recordTypeLast
+	return rt >= recordTypeFull && rt <= recordTypeLast
 }
 
 const (
