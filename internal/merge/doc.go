@@ -2,7 +2,7 @@
 
 // Package merge combines many sorted sources into one sorted iterator.
 //
-// A source is anything that has the methods of sediment.Iterator, for example
+// A source is anything that has the methods of shale.Iterator, for example
 // a skip list or a table. New takes the sources in order of priority. The
 // first source is the newest.
 //

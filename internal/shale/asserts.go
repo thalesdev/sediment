@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sediment
+package shale
 
 import (
 	"github.com/thalesdev/sediment/internal/merge"

@@ -20,7 +20,7 @@ func corruptf(format string, args ...any) error {
 }
 
 // blockIter iterates over the entries of one block. It has the same methods and
-// rules as sediment.Iterator.
+// rules as shale.Iterator.
 type blockIter struct {
 	cmp func(a, b []byte) int
 

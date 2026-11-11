@@ -237,7 +237,7 @@ func (r *Reader) Get(key []byte) (value []byte, found bool, err error) {
 }
 
 // Iterator iterates over all entries of a table in key order. It has the same
-// methods and rules as sediment.Iterator. It is not safe for concurrent use.
+// methods and rules as shale.Iterator. It is not safe for concurrent use.
 type Iterator struct {
 	r      *Reader
 	index  *blockIter

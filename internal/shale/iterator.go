@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sediment
+package shale
 
 // Iterator iterates over key-value pairs in ascending key order, as defined by the
 // comparator of the iterator.

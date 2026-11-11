@@ -11,7 +11,7 @@ import (
 var errClosed = errors.New("merge: iterator closed")
 
 // Source is a sorted sequence of key-value pairs. It has the same methods and
-// rules as sediment.Iterator.
+// rules as shale.Iterator.
 type Source interface {
 	SeekToFirst()
 	Seek(key []byte)
@@ -24,7 +24,7 @@ type Source interface {
 }
 
 // Iterator iterates in key order over all the entries of its sources. It does
-// not remove duplicates. It has the same methods and rules as sediment.Iterator.
+// not remove duplicates. It has the same methods and rules as shale.Iterator.
 // It is not safe for concurrent use.
 type Iterator struct {
 	cmp     func(a, b []byte) int

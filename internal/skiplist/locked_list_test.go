@@ -322,3 +322,37 @@ func TestLockedListConcurrent(t *testing.T) {
 		t.Fatalf("got %d entries, want %d", got, writes)
 	}
 }
+
+func TestApproximateSize(t *testing.T) {
+	t.Run("Should be zero for an empty list and grow with each insert", func(t *testing.T) {
+		l := NewLockedList(bytes.Compare, 1)
+		if got := l.ApproximateSize(); got != 0 {
+			t.Fatalf("empty list has size %d", got)
+		}
+		previous := 0
+		for i := range 100 {
+			l.Insert(key(i), val(i))
+			got := l.ApproximateSize()
+			if got < previous+len(key(i))+len(val(i)) {
+				t.Fatalf("size went from %d to %d after an insert of %d bytes", previous, got, len(key(i))+len(val(i)))
+			}
+			previous = got
+		}
+	})
+
+	t.Run("Should be safe to call while other goroutines insert", func(t *testing.T) {
+		l := NewLockedList(bytes.Compare, 1)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range 500 {
+				l.Insert(key(i), val(i))
+			}
+		}()
+		for range 500 {
+			_ = l.ApproximateSize()
+		}
+		wg.Wait()
+	})
+}

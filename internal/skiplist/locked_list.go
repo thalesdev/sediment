@@ -167,6 +167,14 @@ func (l *LockedList) Insert(key, value []byte) {
 	l.size += len(key) + len(value) + int(unsafe.Sizeof(node{})) + height*int(unsafe.Sizeof(uintptr(0)))
 }
 
+// ApproximateSize returns an estimate of the number of bytes that the entries of
+// the list use. It counts the keys, the values and the nodes.
+func (l *LockedList) ApproximateSize() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.size
+}
+
 // NewIterator returns an iterator over the list. The iterator is not safe for
 // concurrent use.
 func (l *LockedList) NewIterator() *LockedIterator {
