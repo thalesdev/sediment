@@ -47,6 +47,3 @@ type Iterator interface {
 	// subsequent calls return nil.
 	Close() error
 }
-
-
-

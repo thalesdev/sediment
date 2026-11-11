@@ -1,0 +1,290 @@
+package sstable
+
+import (
+	"bytes"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
+
+	"github.com/thalesdev/sediment/internal/bloom"
+)
+
+var errClosed = errors.New("sstable: iterator closed")
+
+// Reader reads a table through an io.ReaderAt. The index and the filter are
+// loaded by Open; data blocks are read on demand and verified against their
+// checksum. A Reader is safe for concurrent use. It never closes the
+// underlying io.ReaderAt.
+type Reader struct {
+	src  io.ReaderAt
+	size int64
+	opts Options
+
+	index  []byte
+	filter []byte
+}
+
+// Open reads the footer, the index and the filter of the table stored in the
+// first size bytes of src. Only Compare and FilterKey of opts are used, and
+// they must match the ones the table was written with.
+func Open(src io.ReaderAt, size int64, opts Options) (*Reader, error) {
+	if size < footerSize {
+		return nil, corruptf("table of %d bytes is smaller than the footer", size)
+	}
+	r := &Reader{src: src, size: size, opts: opts.withDefaults()}
+
+	var footer [footerSize]byte
+	if _, err := src.ReadAt(footer[:], size-footerSize); err != nil {
+		return nil, fmt.Errorf("sstable: reading footer: %w", err)
+	}
+	if binary.LittleEndian.Uint64(footer[footerSize-8:]) != tableMagic {
+		return nil, corruptf("bad magic number")
+	}
+	metaHandle, n := decodeBlockHandle(footer[:])
+	if n <= 0 {
+		return nil, corruptf("malformed metaindex handle")
+	}
+	indexHandle, m := decodeBlockHandle(footer[n:])
+	if m <= 0 {
+		return nil, corruptf("malformed index handle")
+	}
+
+	var err error
+	if r.index, err = r.readBlock(indexHandle); err != nil {
+		return nil, fmt.Errorf("sstable: reading index: %w", err)
+	}
+	if _, err := newBlockIter(r.index, r.opts.Compare); err != nil {
+		return nil, fmt.Errorf("sstable: index: %w", err)
+	}
+	if err := r.loadFilter(metaHandle); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (r *Reader) loadFilter(metaHandle blockHandle) error {
+	meta, err := r.readBlock(metaHandle)
+	if err != nil {
+		return fmt.Errorf("sstable: reading metaindex: %w", err)
+	}
+	it, err := newBlockIter(meta, bytes.Compare)
+	if err != nil {
+		return fmt.Errorf("sstable: metaindex: %w", err)
+	}
+	it.Seek([]byte(filterMetaKey))
+	if it.Err() != nil {
+		return fmt.Errorf("sstable: metaindex: %w", it.Err())
+	}
+	if !it.Valid() || string(it.Key()) != filterMetaKey {
+		return nil
+	}
+	h, n := decodeBlockHandle(it.Value())
+	if n <= 0 || n != len(it.Value()) {
+		return corruptf("malformed filter handle")
+	}
+	if r.filter, err = r.readBlock(h); err != nil {
+		return fmt.Errorf("sstable: reading filter: %w", err)
+	}
+	return nil
+}
+
+// readBlock reads the block at h and verifies its type and checksum.
+// The returned slice is freshly allocated and owned by the caller.
+func (r *Reader) readBlock(h blockHandle) ([]byte, error) {
+	if h.size > uint64(r.size) || h.offset > uint64(r.size)-h.size ||
+		h.offset+h.size > uint64(r.size)-blockTrailerSize {
+		return nil, corruptf("block %+v is outside of the %d byte table", h, r.size)
+	}
+	buf := make([]byte, h.size+blockTrailerSize)
+	if n, err := r.src.ReadAt(buf, int64(h.offset)); n < len(buf) {
+		if err == nil || err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, fmt.Errorf("reading block %+v: %w", h, err)
+	}
+	block, trailer := buf[:h.size], buf[h.size:]
+	if trailer[0] != blockTypeNoCompression {
+		return nil, corruptf("block %+v has unsupported type %d", h, trailer[0])
+	}
+	if got, want := binary.LittleEndian.Uint32(trailer[1:]), blockChecksum(block, trailer[0]); got != want {
+		return nil, corruptf("block %+v has checksum %#08x, want %#08x", h, got, want)
+	}
+	return block, nil
+}
+
+// mayContain consults the filter of the data block starting at offset.
+// It errs on the side of reading the block whenever the filter is unusable.
+func (r *Reader) mayContain(blockOffset uint64, key []byte) bool {
+	fb := r.filter
+	if len(fb) < 5 {
+		return true
+	}
+	lg := fb[len(fb)-1]
+	arrayOffset := int(binary.LittleEndian.Uint32(fb[len(fb)-5:]))
+	if lg >= 64 || arrayOffset > len(fb)-5 {
+		return true
+	}
+	num := (len(fb) - 5 - arrayOffset) / 4
+	idx := blockOffset >> lg
+	if idx >= uint64(num) {
+		return true
+	}
+	start := int(binary.LittleEndian.Uint32(fb[arrayOffset+4*int(idx):]))
+	limit := arrayOffset
+	if int(idx)+1 < num {
+		limit = int(binary.LittleEndian.Uint32(fb[arrayOffset+4*(int(idx)+1):]))
+	}
+	if start > limit || limit > arrayOffset {
+		return true
+	}
+	return bloom.Filter(fb[start:limit]).MayContain(key)
+}
+
+// Get returns a copy of the value stored under key. It reads at most one data
+// block, and none when the filter rules the key out.
+func (r *Reader) Get(key []byte) (value []byte, found bool, err error) {
+	index, err := newBlockIter(r.index, r.opts.Compare)
+	if err != nil {
+		return nil, false, err
+	}
+	index.Seek(key)
+	if !index.Valid() {
+		return nil, false, index.Err()
+	}
+	h, n := decodeBlockHandle(index.Value())
+	if n <= 0 {
+		return nil, false, corruptf("malformed index handle")
+	}
+	if !r.mayContain(h.offset, r.opts.FilterKey(key)) {
+		return nil, false, nil
+	}
+	block, err := r.readBlock(h)
+	if err != nil {
+		return nil, false, err
+	}
+	data, err := newBlockIter(block, r.opts.Compare)
+	if err != nil {
+		return nil, false, err
+	}
+	data.Seek(key)
+	if !data.Valid() {
+		return nil, false, data.Err()
+	}
+	if r.opts.Compare(data.Key(), key) != 0 {
+		return nil, false, nil
+	}
+	return bytes.Clone(data.Value()), true, nil
+}
+
+// Iterator walks every entry of a table in key order. It implements
+// sediment.Iterator. It is not safe for concurrent use.
+type Iterator struct {
+	r      *Reader
+	index  *blockIter
+	data   *blockIter
+	err    error
+	closed bool
+}
+
+// NewIterator returns an unpositioned iterator over the whole table.
+func (r *Reader) NewIterator() *Iterator {
+	it := &Iterator{r: r}
+	it.index, it.err = newBlockIter(r.index, r.opts.Compare)
+	return it
+}
+
+func (it *Iterator) SeekToFirst() {
+	if !it.usable() {
+		return
+	}
+	it.index.SeekToFirst()
+	it.openBlock()
+	if it.data != nil {
+		it.data.SeekToFirst()
+	}
+	it.skipEmptyForward()
+}
+
+func (it *Iterator) Seek(key []byte) {
+	if !it.usable() {
+		return
+	}
+	it.index.Seek(key)
+	it.openBlock()
+	if it.data != nil {
+		it.data.Seek(key)
+	}
+	it.skipEmptyForward()
+}
+
+func (it *Iterator) Next() {
+	if !it.Valid() {
+		return
+	}
+	it.data.Next()
+	it.skipEmptyForward()
+}
+
+func (it *Iterator) Valid() bool   { return it.err == nil && it.data != nil && it.data.Valid() }
+func (it *Iterator) Key() []byte   { return it.data.Key() }
+func (it *Iterator) Value() []byte { return it.data.Value() }
+func (it *Iterator) Err() error    { return it.err }
+
+func (it *Iterator) Close() error {
+	if it.closed {
+		return nil
+	}
+	it.closed = true
+	it.data, it.index = nil, nil
+	return nil
+}
+
+func (it *Iterator) usable() bool {
+	if it.closed {
+		it.err = errors.Join(it.err, errClosed)
+	}
+	return it.err == nil
+}
+
+// openBlock loads the data block the index iterator points at, or clears the
+// data iterator when the index is exhausted or failed.
+func (it *Iterator) openBlock() {
+	it.data = nil
+	if err := it.index.Err(); err != nil {
+		it.err = err
+		return
+	}
+	if !it.index.Valid() {
+		return
+	}
+	h, n := decodeBlockHandle(it.index.Value())
+	if n <= 0 {
+		it.err = corruptf("malformed index handle")
+		return
+	}
+	block, err := it.r.readBlock(h)
+	if err != nil {
+		it.err = err
+		return
+	}
+	if it.data, err = newBlockIter(block, it.r.opts.Compare); err != nil {
+		it.data, it.err = nil, err
+	}
+}
+
+// skipEmptyForward moves to the next data block while the current one has no
+// entry left, surfacing any error the block iterators hit on the way.
+func (it *Iterator) skipEmptyForward() {
+	for it.err == nil && it.data != nil && !it.data.Valid() {
+		if err := it.data.Err(); err != nil {
+			it.err = err
+			return
+		}
+		it.index.Next()
+		it.openBlock()
+		if it.data != nil {
+			it.data.SeekToFirst()
+		}
+	}
+}
