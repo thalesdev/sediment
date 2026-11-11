@@ -180,41 +180,60 @@ func (r *Reader) mayContain(blockOffset uint64, key []byte) bool {
 	return bloom.Filter(fb[start:limit]).MayContain(key)
 }
 
-// Get returns a copy of the value for key, and reports if the key exists. It reads
-// one data block at most. It reads no data block if the filter shows that the key
-// is not in the table.
-func (r *Reader) Get(key []byte) (value []byte, found bool, err error) {
+// Find returns the first entry with a key that is greater than or equal to key,
+// in the block that can hold key. It reads one data block at most. It reads no
+// data block if the filter, which uses the FilterKey of key, shows that the
+// table has no entry for it. It does not need an entry with a key equal to key,
+// so it can find the newest version of a user key from a lookup key. The caller
+// must compare the key that it gets with the key that it wants.
+//
+// If the block has no such entry, found is false. This is correct also when the
+// index holds a separator that is greater than the last key of the block,
+// because a separator is less than the first key of the next block.
+//
+// The slices foundKey and value are borrowed. They are valid only until the
+// next call of the caller to the Reader, and the caller must not change them. To
+// keep them, the caller must copy them.
+func (r *Reader) Find(key []byte) (foundKey, value []byte, found bool, err error) {
 	index, err := newBlockIter(r.index, r.opts.Compare)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	index.Seek(key)
 	if !index.Valid() {
-		return nil, false, index.Err()
+		return nil, nil, false, index.Err()
 	}
 	h, err := decodeExactHandle(index.Value())
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	if !r.mayContain(h.offset, r.opts.FilterKey(key)) {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	block, err := r.readBlock(h)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	data, err := newBlockIter(block, r.opts.Compare)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	data.Seek(key)
 	if !data.Valid() {
-		return nil, false, data.Err()
+		return nil, nil, false, data.Err()
 	}
-	if r.opts.Compare(data.Key(), key) != 0 {
-		return nil, false, nil
+	return data.Key(), data.Value(), true, nil
+}
+
+// Get returns a copy of the value for key, and reports if the key exists. It
+// uses Find, so it reads one data block at most, and none if the filter shows
+// that the key is not in the table. The key of the entry must be equal to key.
+func (r *Reader) Get(key []byte) (value []byte, found bool, err error) {
+	foundKey, v, found, err := r.Find(key)
+	if err != nil || !found || r.opts.Compare(foundKey, key) != 0 {
+		return nil, false, err
 	}
-	return bytes.Clone(data.Value()), true, nil
+	return bytes.Clone(v), true, nil
 }
 
 // Iterator iterates over all entries of a table in key order. It has the same

@@ -163,6 +163,10 @@ func checkAgainst(t *testing.T, data []byte, want []kv, what string) {
 		if err == nil && (!ok || !bytes.Equal(v, e.value)) {
 			t.Fatalf("%s: Get(%q) = %q, %v with no error", what, e.key, v, ok)
 		}
+		fk, fv, found, err := r.Find(e.key)
+		if err == nil && (!found || !bytes.Equal(fk, e.key) || !bytes.Equal(fv, e.value)) {
+			t.Fatalf("%s: Find(%q) = %q, %q, %v with no error", what, e.key, fk, fv, found)
+		}
 	}
 }
 
