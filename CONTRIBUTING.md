@@ -10,7 +10,7 @@ not open a public issue.
 
 ## Setup
 
-You need Go 1.25 or later. There are no other dependencies. The `compat` folder is
+You need Go 1.27 or later. There are no other dependencies. The `compat` folder is
 a separate module that depends on goleveldb.
 
 ```bash

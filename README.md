@@ -11,7 +11,7 @@
 
 <p align="center">
   <img alt="status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-orange">
-  <img alt="Go 1.25" src="https://img.shields.io/badge/go-1.25-00ADD8">
+  <img alt="Go 1.27" src="https://img.shields.io/badge/go-1.27-00ADD8">
   <img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-green">
 </p>
 
@@ -74,7 +74,7 @@ filter, no compression, 1M operations. Lower is better.
 | Fill random, 8 goroutines | 3.4 us/op | 3.5 us/op |
 | Fill sync, 8 goroutines | 635 us/op | 643 us/op |
 
-Apple M3 Pro, macOS, Go 1.25. The method, the single-writer sync numbers, the
+Apple M3 Pro, macOS, Go 1.25 (measured before the move to 1.27). The method, the single-writer sync numbers, the
 write amplification and the profiles are in [BENCHMARKS.md](BENCHMARKS.md).
 Reproduce them with `make bench-compare`.
 
@@ -121,7 +121,7 @@ of their ages.
 
 ## Development
 
-You need Go 1.25 or later.
+You need Go 1.27 or later.
 
 ```bash
 make test        # fast tests, a few seconds
