@@ -350,15 +350,46 @@ func TestWriterStickyError(t *testing.T) {
 		}
 	})
 
-	t.Run("Should keep returning error when payload write fails after header", func(t *testing.T) {
-		dst := &fakeDst{failWriteAt: 2}
+	t.Run("Should write the header and the payload of a fragment with one call", func(t *testing.T) {
+		dst := &fakeDst{}
 		w := NewWriter(dst)
-		if err := w.AddRecord([]byte("a")); !errors.Is(err, errWrite) {
-			t.Fatalf("got %v, want %v", err, errWrite)
+		for i := range 5 {
+			if err := w.AddRecord(payloadOf(10+i, byte(i))); err != nil {
+				t.Fatal(err)
+			}
+			if dst.writes != i+1 {
+				t.Fatalf("after %d records, %d calls to Write", i+1, dst.writes)
+			}
 		}
-		dst.failWriteAt = 0
-		if err := w.AddRecord([]byte("b")); !errors.Is(err, errWrite) {
-			t.Fatalf("got %v, want %v", err, errWrite)
+	})
+
+	t.Run("Should write one call for each fragment of a record that crosses blocks", func(t *testing.T) {
+		dst := &fakeDst{}
+		w := NewWriter(dst)
+		if err := w.AddRecord(payloadOf(3*blockSize, 9)); err != nil {
+			t.Fatal(err)
+		}
+		if want := 4; dst.writes != want {
+			t.Fatalf("%d calls to Write, want %d", dst.writes, want)
+		}
+	})
+
+	t.Run("Should put the zero bytes of the end of a block in the call of the next fragment", func(t *testing.T) {
+		dst := &fakeDst{}
+		w := NewWriter(dst)
+		if err := w.AddRecord(payloadOf(blockSize-headerSize-3, 1)); err != nil {
+			t.Fatal(err)
+		}
+		before := dst.writes
+		if err := w.AddRecord([]byte("next")); err != nil {
+			t.Fatal(err)
+		}
+		if dst.writes != before+1 {
+			t.Fatalf("%d calls for the padding and the next record, want 1", dst.writes-before)
+		}
+		tail := dst.buf.Bytes()[blockSize-3:]
+		if !bytes.Equal(tail[:3], []byte{0, 0, 0}) || len(tail) != 3+headerSize+4 {
+			t.Fatalf("tail is % x", tail)
 		}
 	})
 

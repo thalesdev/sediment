@@ -107,15 +107,23 @@ func batchBytes(seq uint64, key, value string) []byte {
 
 type fakeLog struct {
 	writeErr error
+	hook     func(call int) error
 	syncs    int
 	writes   int
+	data     []byte
 }
 
 func (f *fakeLog) Write(p []byte) (int, error) {
 	f.writes++
+	if f.hook != nil {
+		if err := f.hook(f.writes); err != nil {
+			return 0, err
+		}
+	}
 	if f.writeErr != nil {
 		return 0, f.writeErr
 	}
+	f.data = append(f.data, p...)
 	return len(p), nil
 }
 
@@ -219,9 +227,7 @@ func waitQuiet(t testing.TB, db *DB) {
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		state := db.state.Load()
-		_, planned := pickCompaction(tableInfos(state.tables))
-		if state.imm == nil && !db.compacting.Load() && (!planned || db.opts.disableCompaction) {
+		if db.idle() {
 			return
 		}
 		if time.Now().After(deadline) {

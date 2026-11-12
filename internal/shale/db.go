@@ -38,13 +38,16 @@ type DB struct {
 	opts Options
 	lock *os.File
 
-	mu   sync.Mutex
-	cond *sync.Cond
-	file *os.File
-	log  *wal.Writer
-	err  error
+	mu        sync.Mutex
+	cond      *sync.Cond
+	writeCond *sync.Cond
+	queue     []*writer
+	file      *os.File
+	log       *wal.Writer
+	err       error
 
-	batch batch.Batch
+	batch  batch.Batch
+	keyBuf []byte
 
 	manifestMu  sync.Mutex
 	manifest    *os.File
@@ -63,6 +66,8 @@ type DB struct {
 
 	compactions    atomic.Uint64
 	byCount        atomic.Uint64
+	groups         atomic.Uint64
+	grouped        atomic.Uint64
 	compactRead    atomic.Uint64
 	compactWritten atomic.Uint64
 	flushBytes     atomic.Uint64
@@ -107,7 +112,8 @@ func (db *DB) Recovery() Recovery {
 
 // Put sets the value of key. The caller can use key and value again after Put
 // returns. If Put returns an error, the write can be in the log or not, and the
-// DB refuses all later writes.
+// DB refuses all later writes. Writes that are at the same time can share one
+// record of the log and, if Options.Sync is true, one flush.
 func (db *DB) Put(key, value []byte) error {
 	return db.write(ikey.KindPut, key, value)
 }
@@ -194,8 +200,10 @@ func answer(value []byte, deleted bool) ([]byte, error) {
 	return append([]byte{}, value...), nil
 }
 
-// Close stops the writes, waits for the flush and the compaction that are in
-// progress, syncs the log, closes the files and unlocks the directory. It does not flush the active
+// Close stops the writes, waits for the group of writes that is in progress and
+// for the flush and the compaction that are in progress, syncs the log, closes
+// the files and unlocks the directory. A write that waits in the queue gets
+// ErrClosed. It does not flush the active
 // memtable, because the log holds it and the next Open reads it. After Close,
 // all methods, also Close, return ErrClosed. It returns the first error that it
 // meets, but it always does all its steps.
@@ -207,6 +215,10 @@ func (db *DB) Close() error {
 	}
 	db.closed.Store(true)
 	db.cond.Broadcast()
+	db.writeCond.Broadcast()
+	for len(db.queue) > 0 {
+		db.writeCond.Wait()
+	}
 	db.mu.Unlock()
 	<-db.flushDone
 	<-db.compactDone
@@ -229,38 +241,6 @@ func (db *DB) Close() error {
 	db.readMu.Unlock()
 	keep(unlockDir(db.lock))
 	return first
-}
-
-// write does a Put or a Delete. It makes room in the memtable, writes the batch
-// to the log, and then to the memtable, and then it makes the sequence number
-// visible to Get.
-func (db *DB) write(kind ikey.Kind, key, value []byte) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	if err := db.makeRoom(); err != nil {
-		return err
-	}
-	seq := db.lastSeq.Load() + 1
-	if seq > ikey.MaxSeq {
-		return errSeqExhausted
-	}
-	db.batch.Reset(seq)
-	if kind == ikey.KindPut {
-		db.batch.Put(key, value)
-	} else {
-		db.batch.Delete(key)
-	}
-	if err := db.log.AddRecord(db.batch.Bytes()); err != nil {
-		return db.fail("write-ahead log", err)
-	}
-	if db.opts.Sync {
-		if err := db.log.Sync(); err != nil {
-			return db.fail("write-ahead log", err)
-		}
-	}
-	db.state.Load().mem.list.Insert(ikey.Append(nil, key, seq, kind), value)
-	db.lastSeq.Store(seq)
-	return nil
 }
 
 // fail stores the error of a part of the DB, so that the DB refuses later

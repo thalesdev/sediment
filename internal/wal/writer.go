@@ -2,7 +2,10 @@
 
 package wal
 
-import "io"
+import (
+	"io"
+	"slices"
+)
 
 // syncWriter is a destination that can flush its data to stable storage.
 type syncWriter interface {
@@ -11,12 +14,14 @@ type syncWriter interface {
 }
 
 // Writer appends records to a log. It splits a record into fragments, so that no
-// fragment crosses the end of a block of blockSize bytes. After the first error,
-// each method returns that error.
+// fragment crosses the end of a block of blockSize bytes. It writes each
+// fragment with one call to dst. After the first error, each method returns that
+// error.
 type Writer struct {
 	dst         syncWriter
 	blockOffset uint64
-	buf         [headerSize]byte
+	pad         int
+	out         []byte
 	err         error
 }
 
@@ -38,10 +43,7 @@ func (w *Writer) AddRecord(data []byte) error {
 	for {
 		leftover := blockSize - w.blockOffset
 		if leftover < headerSize {
-			if _, err := w.dst.Write(make([]byte, leftover)); err != nil {
-				w.err = err
-				return w.err
-			}
+			w.pad = int(leftover)
 			w.blockOffset = 0
 			continue
 		}
@@ -86,8 +88,10 @@ func (w *Writer) Sync() error {
 	return err
 }
 
-// writeFragment writes the header and the payload of one fragment. The fragment
-// must fit in the rest of the current block.
+// writeFragment writes the header and the payload of one fragment with one call
+// to dst. If the end of the last block had less room than a header, the call
+// starts with the zero bytes that fill that block. The fragment must fit in the
+// rest of the current block.
 func (w *Writer) writeFragment(data []byte, recordType recordType) error {
 	if w.err != nil {
 		return w.err
@@ -96,17 +100,17 @@ func (w *Writer) writeFragment(data []byte, recordType recordType) error {
 		panic("wal: fragment size is more than free block size")
 	}
 	header := newHeader(data, recordType)
-	header.marshal(w.buf[:])
-	if _, err := w.dst.Write(w.buf[:]); err != nil {
+	size := w.pad + headerSize + len(data)
+	out := slices.Grow(w.out[:0], size)[:size]
+	clear(out[:w.pad])
+	header.marshal(out[w.pad:])
+	copy(out[w.pad+headerSize:], data)
+	w.out = out
+	if _, err := w.dst.Write(out); err != nil {
 		w.err = err
 		return err
 	}
-
-	if _, err := w.dst.Write(data); err != nil {
-		w.err = err
-		return err
-	}
-
+	w.pad = 0
 	w.blockOffset += headerSize + uint64(len(data))
 	return nil
 }

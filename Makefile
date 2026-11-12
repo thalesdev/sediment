@@ -1,8 +1,9 @@
 GO ?= go
 
-.PHONY: all build test race full test-full race-full fuzz cover bench fmt fmt-check vet check compat tidy clean help
+.PHONY: all build test race full test-full race-full fuzz cover bench bench-compare fmt fmt-check vet check compat tidy clean help
 
 FUZZTIME ?= 10s
+BENCHCOUNT ?= 1
 
 all: check test ## format check, vet and the fast tests
 
@@ -22,14 +23,14 @@ race-full: ## all the tests with the race detector
 	$(GO) test -race -count=1 ./...
 
 fuzz: ## every fuzz target for FUZZTIME each (default 10s)
-	$(GO) test ./internal/sstable -run '^$$' -fuzz '^FuzzBlockIter$$' -fuzztime $(FUZZTIME)
-	$(GO) test ./internal/sstable -run '^$$' -fuzz '^FuzzReader$$' -fuzztime $(FUZZTIME)
-	$(GO) test ./internal/sstable -run '^$$' -fuzz '^FuzzCommonPrefixLength$$' -fuzztime $(FUZZTIME)
-	$(GO) test ./internal/merge -run '^$$' -fuzz '^FuzzIterator$$' -fuzztime $(FUZZTIME)
-	$(GO) test ./internal/batch -run '^$$' -fuzz '^FuzzParse$$' -fuzztime $(FUZZTIME)
-	$(GO) test ./internal/manifest -run '^$$' -fuzz '^FuzzDecode$$' -fuzztime $(FUZZTIME)
-	$(GO) test ./internal/ikey -run '^$$' -fuzz '^FuzzCompare$$' -fuzztime $(FUZZTIME)
-	$(GO) test ./internal/ikey -run '^$$' -fuzz '^FuzzParse$$' -fuzztime $(FUZZTIME)
+	$(GO) test ./internal/sstable -run '^$$' -fuzz '^FuzzBlockIter$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./internal/sstable -run '^$$' -fuzz '^FuzzReader$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./internal/sstable -run '^$$' -fuzz '^FuzzCommonPrefixLength$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./internal/merge -run '^$$' -fuzz '^FuzzIterator$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./internal/batch -run '^$$' -fuzz '^FuzzParse$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./internal/manifest -run '^$$' -fuzz '^FuzzDecode$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./internal/ikey -run '^$$' -fuzz '^FuzzCompare$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./internal/ikey -run '^$$' -fuzz '^FuzzParse$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
 
 full: check test-full race-full compat fuzz ## everything: checks, all tests, race, compat and fuzz
 
@@ -39,6 +40,11 @@ cover: ## unit tests with coverage report in coverage.out
 
 bench: ## run benchmarks
 	$(GO) test -run '^$$' -bench . -benchmem ./...
+
+bench-compare: ## Shale against goleveldb with the db_bench workloads, slow (BENCHCOUNT, default 1)
+	cd compat && $(GO) test -run '^$$' -bench '^Benchmark(FillRandom|Overwrite|ReadRandom|FillRandomParallel)$$' -benchtime=1000000x -count=$(BENCHCOUNT)
+	cd compat && $(GO) test -run '^$$' -bench '^BenchmarkFillSync$$' -benchtime=1000x -count=$(BENCHCOUNT)
+	cd compat && $(GO) test -run '^$$' -bench '^BenchmarkFillSyncParallel$$' -benchtime=4000x -count=$(BENCHCOUNT)
 
 fmt: ## format all Go files (main module and compat)
 	gofmt -w .

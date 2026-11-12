@@ -49,6 +49,7 @@ func Open(dir string, opts Options) (*DB, error) {
 		compactDone: make(chan struct{}),
 	}
 	db.cond = sync.NewCond(&db.mu)
+	db.writeCond = sync.NewCond(&db.mu)
 	if err := db.open(); err != nil {
 		unlockDir(lock)
 		return nil, err

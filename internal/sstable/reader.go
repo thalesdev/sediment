@@ -25,6 +25,8 @@ type Reader struct {
 
 	index  []byte
 	filter []byte
+
+	indexIter blockIter
 }
 
 // Open reads the footer, the index and the filter of the table in the first size
@@ -57,13 +59,24 @@ func Open(src io.ReaderAt, size int64, opts Options) (*Reader, error) {
 	if r.index, err = r.readBlock(indexHandle); err != nil {
 		return nil, fmt.Errorf("sstable: reading index: %w", err)
 	}
-	if _, err := newBlockIter(r.index, r.opts.Compare); err != nil {
+	indexIter, err := newBlockIter(r.index, r.opts.Compare)
+	if err != nil {
 		return nil, fmt.Errorf("sstable: index: %w", err)
 	}
+	r.indexIter = *indexIter
 	if err := r.loadFilter(metaHandle); err != nil {
 		return nil, err
 	}
 	return r, nil
+}
+
+// newIndexIter returns a new iterator over the index block. Open checked the
+// restart points of the index one time, so this does not check them again. The
+// check goes through all the restart points, and an index can have tens of
+// thousands of them.
+func (r *Reader) newIndexIter() *blockIter {
+	it := r.indexIter
+	return &it
 }
 
 // loadFilter reads the metaindex block at metaHandle, and then the filter block
@@ -195,10 +208,7 @@ func (r *Reader) mayContain(blockOffset uint64, key []byte) bool {
 // next call of the caller to the Reader, and the caller must not change them. To
 // keep them, the caller must copy them.
 func (r *Reader) Find(key []byte) (foundKey, value []byte, found bool, err error) {
-	index, err := newBlockIter(r.index, r.opts.Compare)
-	if err != nil {
-		return nil, nil, false, err
-	}
+	index := r.newIndexIter()
 	index.Seek(key)
 	if !index.Valid() {
 		return nil, nil, false, index.Err()
@@ -250,7 +260,7 @@ type Iterator struct {
 // until the caller calls SeekToFirst or Seek.
 func (r *Reader) NewIterator() *Iterator {
 	it := &Iterator{r: r}
-	it.index, it.err = newBlockIter(r.index, r.opts.Compare)
+	it.index = r.newIndexIter()
 	return it
 }
 

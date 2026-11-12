@@ -3,7 +3,6 @@
 package skiplist
 
 import (
-	"bytes"
 	"sync"
 	"unsafe"
 )
@@ -13,6 +12,54 @@ type node struct {
 	key   []byte
 	value []byte
 	next  []*node
+}
+
+// node1 holds a node of height 1 and the array for its next pointers in one block
+// of memory. A node with a height of 1 is three out of four nodes.
+type node1 struct {
+	node
+	ptrs [1]*node
+}
+
+// node2 holds a node of height 2 and the array for its next pointers in one block
+// of memory.
+type node2 struct {
+	node
+	ptrs [2]*node
+}
+
+// node4 holds a node of height 3 or 4 and the array for its next pointers in one
+// block of memory. A height of 4 or less is almost all of the nodes.
+type node4 struct {
+	node
+	ptrs [4]*node
+}
+
+// newNode returns a node with the given height. The key and the value are in
+// data, one after the other, and keyLen is the length of the key. The node
+// keeps data. It uses one allocation for the node and for its next pointers when
+// the height is 4 or less.
+func newNode(data []byte, keyLen, height int) *node {
+	var n *node
+	switch {
+	case height == 1:
+		x := &node1{}
+		x.next = x.ptrs[:]
+		n = &x.node
+	case height == 2:
+		x := &node2{}
+		x.next = x.ptrs[:]
+		n = &x.node
+	case height <= 4:
+		x := &node4{}
+		x.next = x.ptrs[:height]
+		n = &x.node
+	default:
+		n = &node{next: make([]*node, height)}
+	}
+	n.key = data[:keyLen:keyLen]
+	n.value = data[keyLen:]
+	return n
 }
 
 // LockedIterator iterates over a LockedList in key order. It takes the read lock
@@ -135,9 +182,14 @@ func (l *LockedList) findGreaterOrEqual(key []byte, update []*node) *node {
 	return x.next[0]
 }
 
-// Insert adds a key-value pair to the list. It panics if the key is already in the
-// list.
+// Insert adds a key-value pair to the list. It copies the key and the value in
+// one block of memory, so the caller can use them again after Insert returns. It
+// panics if the key is already in the list.
 func (l *LockedList) Insert(key, value []byte) {
+	data := make([]byte, len(key)+len(value))
+	copy(data, key)
+	copy(data[len(key):], value)
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -153,15 +205,11 @@ func (l *LockedList) Insert(key, value []byte) {
 		l.currentHeight = height
 	}
 
-	newNode := &node{
-		key:   bytes.Clone(key),
-		value: bytes.Clone(value),
-		next:  make([]*node, height),
-	}
+	added := newNode(data, len(key), height)
 
 	for i := range height {
-		newNode.next[i] = l.buffer[i].next[i]
-		l.buffer[i].next[i] = newNode
+		added.next[i] = l.buffer[i].next[i]
+		l.buffer[i].next[i] = added
 	}
 
 	l.size += len(key) + len(value) + int(unsafe.Sizeof(node{})) + height*int(unsafe.Sizeof(uintptr(0)))
