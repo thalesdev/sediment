@@ -140,6 +140,7 @@ func killRounds(t *testing.T, name string, memtable int) {
 
 		db := openDB(t, dir, Options{MemtableSize: memtable})
 		checkDirectory(t, dir, db)
+		checkSeqInvariant(t, db)
 		for n := 0; n <= confirmed; n++ {
 			got, err := db.Get(keyN(n))
 			if err != nil || !bytes.Equal(got, killValue(n)) {

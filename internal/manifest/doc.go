@@ -6,7 +6,8 @@
 // An Edit is one record. It holds some of these fields: the number of the first
 // log file that is not in a table yet, the next file number, the last sequence
 // number, tables to add and tables to delete. Each field starts with a tag that
-// is a varint. The tags are the ones of the LevelDB MANIFEST. A Version is the
+// is a varint. The tags are the ones of the LevelDB MANIFEST, and one more tag
+// adds a table together with its range of sequence numbers. A Version is the
 // state after a sequence of edits.
 //
 // The package does not read or write files. The caller writes each encoded edit

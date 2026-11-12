@@ -15,6 +15,7 @@ import (
 const walHeaderSize = 7
 
 func TestPutGetDelete(t *testing.T) {
+	t.Parallel()
 	t.Run("Should store and return a value, and replace it", func(t *testing.T) {
 		db := openDB(t, t.TempDir(), Options{})
 		defer db.Close()
@@ -100,6 +101,7 @@ func TestPutGetDelete(t *testing.T) {
 }
 
 func TestReopen(t *testing.T) {
+	t.Parallel()
 	t.Run("Should return after Open what was written before Close, also the deletes", func(t *testing.T) {
 		dir := t.TempDir()
 		db := openDB(t, dir, Options{})
@@ -125,7 +127,7 @@ func TestReopen(t *testing.T) {
 		dir := t.TempDir()
 		var want int
 		for round := range 6 {
-			db := openDB(t, dir, Options{})
+			db := openDB(t, dir, Options{disableCompaction: true})
 			if got := db.lastSeq.Load(); got != uint64(want) {
 				t.Fatalf("round %d: last sequence number is %d, want %d", round, got, want)
 			}
@@ -144,7 +146,7 @@ func TestReopen(t *testing.T) {
 				t.Fatalf("round %d: %d table files, want %d", round, n, round)
 			}
 		}
-		db := openDB(t, dir, Options{})
+		db := openDB(t, dir, Options{disableCompaction: true})
 		defer db.Close()
 		if rec := db.Recovery(); rec.Logs != 1 || rec.LastSeq != 30 || rec.Tables != 6 {
 			t.Fatalf("Recovery = %+v", rec)
@@ -190,6 +192,7 @@ func TestReopen(t *testing.T) {
 }
 
 func TestLockAndClose(t *testing.T) {
+	t.Parallel()
 	t.Run("Should refuse a second Open of the same directory until the first is closed", func(t *testing.T) {
 		dir := t.TempDir()
 		db := openDB(t, dir, Options{})
@@ -223,6 +226,7 @@ func TestLockAndClose(t *testing.T) {
 }
 
 func TestReplayErrors(t *testing.T) {
+	t.Parallel()
 	cases := map[string][][]byte{
 		"a record with a valid checksum that is not a batch":       {[]byte("this is not a batch")},
 		"a batch that is cut but has a valid checksum":             {batchBytes(1, "k", "v")[:15]},
@@ -277,6 +281,7 @@ func TestReplayErrors(t *testing.T) {
 }
 
 func TestRecoveryTruncation(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	db := openDB(t, dir, Options{})
 	const writes = 15
@@ -298,7 +303,14 @@ func TestRecoveryTruncation(t *testing.T) {
 	}
 
 	t.Run("Should recover exactly the writes that are whole, with the log cut at any length", func(t *testing.T) {
+		interesting := map[int]bool{}
+		for _, e := range ends {
+			interesting[e-1], interesting[e], interesting[e+1] = true, true, true
+		}
 		for length := 0; length <= len(full); length++ {
+			if testing.Short() && length%25 != 0 && !interesting[length] {
+				continue
+			}
 			cut := t.TempDir()
 			if err := os.WriteFile(filepath.Join(cut, logName(1)), full[:length], 0o644); err != nil {
 				t.Fatal(err)
@@ -337,6 +349,7 @@ func TestRecoveryTruncation(t *testing.T) {
 }
 
 func TestStickyError(t *testing.T) {
+	t.Parallel()
 	t.Run("Should refuse all later writes after an error of the log and keep the data that it has", func(t *testing.T) {
 		db := openDB(t, t.TempDir(), Options{})
 		mustPut(t, db, "before", "1")
@@ -362,6 +375,7 @@ func TestStickyError(t *testing.T) {
 }
 
 func TestSyncOption(t *testing.T) {
+	t.Parallel()
 	for _, sync := range []bool{false, true} {
 		name := "Should not sync the log at each write"
 		if sync {

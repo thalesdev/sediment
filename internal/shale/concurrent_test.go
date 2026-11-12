@@ -13,8 +13,10 @@ import (
 )
 
 func TestConcurrent(t *testing.T) {
+	t.Parallel()
 	t.Run("Should give each reader a value that was written, and never go back for a key", func(t *testing.T) {
-		const writers, readers, keysPerWriter, rounds = 4, 4, 8, 600
+		const writers, readers, keysPerWriter = 4, 4, 8
+		rounds := sweepStep(600, 150)
 		db := openDB(t, t.TempDir(), Options{})
 		defer db.Close()
 
@@ -145,8 +147,10 @@ func TestConcurrent(t *testing.T) {
 }
 
 func TestConcurrentFlush(t *testing.T) {
+	t.Parallel()
 	t.Run("Should never miss a write that returned, with flushes during the reads", func(t *testing.T) {
-		const writers, readers, keysPerWriter, rounds = 3, 4, 6, 300
+		const writers, readers, keysPerWriter = 3, 4, 6
+		rounds := sweepStep(300, 100)
 		db := openDB(t, t.TempDir(), Options{MemtableSize: 4096})
 		defer db.Close()
 
@@ -218,8 +222,8 @@ func TestConcurrentFlush(t *testing.T) {
 		close(stop)
 		readerWG.Wait()
 		waitIdle(t, db)
-		if n := len(db.state.Load().tables); n < 5 {
-			t.Fatalf("only %d tables, the test does not cover flushes", n)
+		if m := db.Metrics(); m.FlushBytes < 5*4096 || m.Compactions == 0 {
+			t.Fatalf("Metrics = %+v, the test does not cover flushes and compactions", m)
 		}
 		for w := range writers {
 			for k := range keysPerWriter {

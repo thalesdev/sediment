@@ -20,10 +20,19 @@ import (
 // to a table file in level 0, while new writes go to a new memtable. The set of
 // table files is the one that the MANIFEST names.
 //
-// The DB does not compact the tables yet. The number of tables, and of open
-// files, grows without a limit, and a read looks in each table that can hold
-// the key, so Get gets slower with time. Each Open that finds writes in the
-// logs also makes one table.
+// A goroutine compacts the tables with a size-tiered rule: it joins tables that
+// are next to each other by age and have a similar size into one table, and it
+// drops the versions that a newer version hides. All the tables are in level 0.
+// The output of a compaction is one table with no limit of size, so a large
+// compaction can need as much free space as the tables that it reads. A table
+// that a compaction replaced is removed when no read uses it. The one that
+// drops the last reference can be a Get, and then the Get closes and removes
+// the file. If many tables pile up, a write that needs to freeze the memtable
+// waits for the compaction. A crash during a compaction can leave table files
+// that the MANIFEST does not name. The next Open removes them, or moves them to
+// the lost directory if the MANIFEST had damage.
+//
+// Each Open that finds writes in the logs also makes one table.
 type DB struct {
 	dir  string
 	opts Options
@@ -37,6 +46,7 @@ type DB struct {
 
 	batch batch.Batch
 
+	manifestMu  sync.Mutex
 	manifest    *os.File
 	manifestLog *wal.Writer
 
@@ -45,9 +55,17 @@ type DB struct {
 	nextFile atomic.Uint64
 	closed   atomic.Bool
 
-	readMu    sync.RWMutex
-	flushDone chan struct{}
-	recovery  Recovery
+	readMu      sync.RWMutex
+	flushDone   chan struct{}
+	compactDone chan struct{}
+	compacting  atomic.Bool
+	recovery    Recovery
+
+	compactions    atomic.Uint64
+	byCount        atomic.Uint64
+	compactRead    atomic.Uint64
+	compactWritten atomic.Uint64
+	flushBytes     atomic.Uint64
 }
 
 // Recovery tells what Open found in the directory.
@@ -105,14 +123,24 @@ func (db *DB) Delete(key []byte) error {
 // started, and never a part of a write. It looks in the memtable, in the frozen
 // memtable and in the tables, from the newest to the oldest, and the first
 // version that it finds decides.
+//
+// Get takes the state before it reads the last sequence number. A compaction can
+// drop an old version of a key if a newer one is in the tables. Every entry in
+// the tables has a sequence number that is not above the last one, so a last
+// sequence number that is read after the state always sees the newest version
+// that the state holds. The other order can miss a version that was dropped.
 func (db *DB) Get(key []byte) ([]byte, error) {
 	db.readMu.RLock()
 	defer db.readMu.RUnlock()
 	if db.closed.Load() {
 		return nil, ErrClosed
 	}
+	state := db.acquireState()
+	defer state.release()
+	if db.opts.getHook != nil {
+		db.opts.getHook("state")
+	}
 	seq := db.lastSeq.Load()
-	state := db.state.Load()
 	lookup := ikey.AppendLookup(nil, key, seq)
 	for _, m := range []*memtable{state.mem, state.imm} {
 		if m == nil {
@@ -138,6 +166,26 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 	return nil, ErrNotFound
 }
 
+// acquireState returns the current state with a reference that the caller must
+// release.
+func (db *DB) acquireState() *readState {
+	for {
+		if s := db.state.Load(); s.tryAcquire() {
+			return s
+		}
+	}
+}
+
+// setState makes s the current state, and takes a reference on each of its
+// tables. It returns the state that it replaced, which the caller must release,
+// after it unlocks db.mu if the release can close files.
+func (db *DB) setState(s *readState) *readState {
+	for _, t := range s.tables {
+		t.refs.Add(1)
+	}
+	return db.state.Swap(s)
+}
+
 // answer returns a copy of value, or ErrNotFound for a delete.
 func answer(value []byte, deleted bool) ([]byte, error) {
 	if deleted {
@@ -146,8 +194,8 @@ func answer(value []byte, deleted bool) ([]byte, error) {
 	return append([]byte{}, value...), nil
 }
 
-// Close stops the writes, waits for the flush that is in progress, syncs the
-// log, closes the files and unlocks the directory. It does not flush the active
+// Close stops the writes, waits for the flush and the compaction that are in
+// progress, syncs the log, closes the files and unlocks the directory. It does not flush the active
 // memtable, because the log holds it and the next Open reads it. After Close,
 // all methods, also Close, return ErrClosed. It returns the first error that it
 // meets, but it always does all its steps.
@@ -161,6 +209,7 @@ func (db *DB) Close() error {
 	db.cond.Broadcast()
 	db.mu.Unlock()
 	<-db.flushDone
+	<-db.compactDone
 
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -176,9 +225,7 @@ func (db *DB) Close() error {
 	keep(db.file.Close())
 	keep(db.manifest.Close())
 	db.readMu.Lock()
-	for _, t := range db.state.Load().tables {
-		keep(t.file.Close())
-	}
+	db.state.Load().release()
 	db.readMu.Unlock()
 	keep(unlockDir(db.lock))
 	return first

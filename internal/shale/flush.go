@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/thalesdev/sediment/internal/ikey"
 	"github.com/thalesdev/sediment/internal/manifest"
 	"github.com/thalesdev/sediment/internal/skiplist"
 	"github.com/thalesdev/sediment/internal/sstable"
@@ -15,9 +16,10 @@ import (
 )
 
 // makeRoom makes sure that the memtable can take a write. If the memtable is
-// larger than the limit, it freezes it, or it waits if a frozen memtable is
-// still in the flush. It returns the error of the DB if the DB is closed or
-// failed. The caller must hold db.mu.
+// larger than the limit, it freezes it. It waits if a frozen memtable is still
+// in the flush, and it waits if there are so many tables that the compaction
+// must catch up. It returns the error of the DB if the DB is closed or failed.
+// The caller must hold db.mu.
 func (db *DB) makeRoom() error {
 	for {
 		if db.closed.Load() {
@@ -31,6 +33,10 @@ func (db *DB) makeRoom() error {
 			return nil
 		}
 		if state.imm != nil {
+			db.cond.Wait()
+			continue
+		}
+		if !db.opts.disableCompaction && len(state.tables) >= stallTables {
 			db.cond.Wait()
 			continue
 		}
@@ -62,9 +68,9 @@ func (db *DB) freeze(state *readState) error {
 		return abandon(fmt.Errorf("syncing the log: %w", err))
 	}
 	old := db.file
-	db.file, db.log = f, wal.NewWriter(f)
+	db.file, db.log = f, wal.NewWriter(syncFile{f})
 	state.mem.maxSeq = db.lastSeq.Load()
-	db.state.Store(&readState{mem: newMemtable(number), imm: state.mem, tables: state.tables})
+	db.setState(newReadState(newMemtable(number), state.mem, state.tables)).release()
 	db.cond.Broadcast()
 	if err := old.Close(); err != nil {
 		return fmt.Errorf("closing the log: %w", err)
@@ -105,7 +111,7 @@ func (db *DB) flushLoop() {
 			return
 		}
 		current := db.state.Load()
-		db.state.Store(&readState{mem: current.mem, tables: append([]*table{tbl}, current.tables...)})
+		db.setState(newReadState(current.mem, nil, append([]*table{tbl}, current.tables...))).release()
 		db.cond.Broadcast()
 		db.mu.Unlock()
 		err = db.cleanup(frozen)
@@ -161,8 +167,9 @@ func (db *DB) cleanup(frozen *memtable) error {
 }
 
 // writeTable writes the entries of list to the table file with number, flushes
-// the file and the directory, and returns the description of the table. The list
-// must not be empty and must not change.
+// the file and the directory, and returns the description of the table, with the
+// range of sequence numbers that the entries have. The list must not be empty
+// and must not change.
 func (db *DB) writeTable(list *skiplist.LockedList, number uint64) (manifest.TableMeta, error) {
 	path := filepath.Join(db.dir, tableName(number))
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -173,11 +180,17 @@ func (db *DB) writeTable(list *skiplist.LockedList, number uint64) (manifest.Tab
 		f.Close()
 		return manifest.TableMeta{}, fmt.Errorf("shale: writing table %s: %w", tableName(number), err)
 	}
-	w := sstable.NewWriter(f, tableOptions())
+	w := sstable.NewWriter(syncFile{f}, tableOptions())
 	it := list.NewIterator()
 	defer it.Close()
 	var smallest, largest []byte
+	smallestSeq, largestSeq := uint64(ikey.MaxSeq), uint64(0)
 	for it.SeekToFirst(); it.Valid(); it.Next() {
+		_, seq, _, err := ikey.Parse(it.Key())
+		if err != nil {
+			return fail(err)
+		}
+		smallestSeq, largestSeq = min(smallestSeq, seq), max(largestSeq, seq)
 		if smallest == nil {
 			smallest = bytes.Clone(it.Key())
 		}
@@ -202,5 +215,9 @@ func (db *DB) writeTable(list *skiplist.LockedList, number uint64) (manifest.Tab
 	if err := syncDir(db.dir); err != nil {
 		return manifest.TableMeta{}, fmt.Errorf("shale: syncing the directory: %w", err)
 	}
-	return manifest.TableMeta{Level: 0, Number: number, Size: uint64(info.Size()), Smallest: smallest, Largest: largest}, nil
+	db.flushBytes.Add(uint64(info.Size()))
+	return manifest.TableMeta{
+		Level: 0, Number: number, Size: uint64(info.Size()), Smallest: smallest, Largest: largest,
+		HasSeq: true, SmallestSeq: smallestSeq, LargestSeq: largestSeq,
+	}, nil
 }

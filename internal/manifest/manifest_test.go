@@ -20,6 +20,12 @@ func meta(level int, number uint64) TableMeta {
 	return TableMeta{Level: level, Number: number, Size: number * 100, Smallest: key("a", number), Largest: key("z", number)}
 }
 
+func metaSeq(level int, number, smallest, largest uint64) TableMeta {
+	m := meta(level, number)
+	m.HasSeq, m.SmallestSeq, m.LargestSeq = true, smallest, largest
+	return m
+}
+
 func assertCorrupt(t *testing.T, data []byte) {
 	t.Helper()
 	if _, err := Decode(data); !errors.Is(err, ErrCorrupt) {
@@ -48,6 +54,25 @@ func TestEncodeDecode(t *testing.T) {
 		}
 	})
 
+	t.Run("Should write a table with a sequence range under the tag 100", func(t *testing.T) {
+		e := Edit{Add: []TableMeta{{Level: 0, Number: 8, Size: 200, Smallest: []byte("ab"), Largest: []byte("cd"), HasSeq: true, SmallestSeq: 3, LargestSeq: 300}}}
+		want := []byte{100, 0, 8, 0xc8, 0x01, 2, 'a', 'b', 2, 'c', 'd', 3, 0xac, 0x02}
+		if got := e.Encode(nil); !bytes.Equal(got, want) {
+			t.Fatalf("got % x, want % x", got, want)
+		}
+		got, err := Decode(want)
+		if err != nil || !reflect.DeepEqual(got, e) {
+			t.Fatalf("got %+v, %v, want %+v", got, err, e)
+		}
+	})
+
+	t.Run("Should read a table of the LevelDB tag as a table with no sequence range", func(t *testing.T) {
+		got, err := Decode([]byte{7, 0, 8, 1, 1, 'a', 1, 'b'})
+		if err != nil || len(got.Add) != 1 || got.Add[0].HasSeq {
+			t.Fatalf("got %+v, %v", got, err)
+		}
+	})
+
 	t.Run("Should round trip every kind of field", func(t *testing.T) {
 		cases := map[string]Edit{
 			"log number":       {HasLogNumber: true, LogNumber: 0},
@@ -55,6 +80,7 @@ func TestEncodeDecode(t *testing.T) {
 			"last seq":         {HasLastSeq: true, LastSeq: ikey.MaxSeq},
 			"delete":           {Delete: []TableRef{{0, 1}, {MaxLevel, math.MaxUint64}}},
 			"add":              {Add: []TableMeta{meta(0, 3), meta(MaxLevel, 9)}},
+			"add with seq":     {Add: []TableMeta{metaSeq(0, 3, 0, 0), metaSeq(1, 4, 5, ikey.MaxSeq)}},
 			"everything": {
 				HasLogNumber: true, LogNumber: 4, HasNextFileNumber: true, NextFileNumber: 10, HasLastSeq: true, LastSeq: 77,
 				Delete: []TableRef{{0, 1}}, Add: []TableMeta{meta(0, 5)},
@@ -111,6 +137,15 @@ func TestDecodeCorruption(t *testing.T) {
 		assertCorrupt(t, []byte{7, 9, 1, 1, 1, 'a', 1, 'b'})
 		assertCorrupt(t, []byte{7, 0, 1, 1, 0, 1, 'b'})
 		assertCorrupt(t, []byte{7, 0, 1, 1, 1, 'a', 0})
+	})
+
+	t.Run("Should reject a sequence range that is not valid", func(t *testing.T) {
+		valid := []byte{100, 0, 1, 1, 1, 'a', 1, 'b'}
+		assertCorrupt(t, valid)
+		assertCorrupt(t, append(bytes.Clone(valid), 5, 4))
+		assertCorrupt(t, append(bytes.Clone(valid), 5))
+		assertCorrupt(t, append(bytes.Clone(valid), 1))
+		assertCorrupt(t, Edit{Add: []TableMeta{metaSeq(0, 1, 1, ikey.MaxSeq+1)}}.Encode(nil))
 	})
 
 	t.Run("Should reject a cut edit and a length that does not fit", func(t *testing.T) {
@@ -210,6 +245,7 @@ func FuzzDecode(f *testing.F) {
 	f.Add(Edit{HasLogNumber: true, LogNumber: 5, Delete: []TableRef{{1, 7}}, Add: []TableMeta{meta(0, 3)}}.Encode(nil))
 	f.Add([]byte{})
 	f.Add([]byte{7, 0, 1, 1, 1, 'a', 1, 'b'})
+	f.Add(Edit{Add: []TableMeta{metaSeq(0, 3, 4, 9)}}.Encode(nil))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		e, err := Decode(data)
 		if err != nil {

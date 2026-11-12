@@ -26,6 +26,20 @@ type Options struct {
 	// "cleanup". If it returns an error, the flush fails. Only the tests of the
 	// package set it.
 	flushHook func(stage string) error
+
+	// compactHook is called by the compaction at the stages "start", "output",
+	// "commit" and "done". If it returns an error, the compaction fails. Only the
+	// tests of the package set it.
+	compactHook func(stage string) error
+
+	// getHook is called by Get at the stage "state", after it holds the state
+	// and before it reads the sequence number. Only the tests of the package set
+	// it.
+	getHook func(stage string)
+
+	// disableCompaction stops the compaction. Only the tests of the package set
+	// it.
+	disableCompaction bool
 }
 
 // memtableSize returns the size at which the memtable is frozen.

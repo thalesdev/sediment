@@ -25,7 +25,7 @@ type newest struct {
 	file  int
 }
 
-func TestGoleveldbReadsShaleTables(t *testing.T) {
+func TestGoleveldbReadsShaleTablesAfterCompaction(t *testing.T) {
 	rng := rand.New(rand.NewPCG(51, 53))
 	users := randomUsers(rng, 300)
 	dir := t.TempDir()
@@ -36,7 +36,8 @@ func TestGoleveldbReadsShaleTables(t *testing.T) {
 	}
 	model := map[string][]byte{}
 	written := map[string]bool{}
-	for i := range 4000 {
+	const operations = 4000
+	for i := range operations {
 		user := users[rng.IntN(len(users))]
 		if rng.IntN(5) == 0 {
 			if err := db.Delete(user); err != nil {
@@ -52,6 +53,9 @@ func TestGoleveldbReadsShaleTables(t *testing.T) {
 		}
 		written[string(user)] = true
 	}
+	if db.Metrics().Compactions == 0 {
+		t.Fatal("no compaction ran, so the test does not cover the tables that it makes")
+	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -64,11 +68,12 @@ func TestGoleveldbReadsShaleTables(t *testing.T) {
 	}
 
 	paths, err := filepath.Glob(filepath.Join(dir, "*.sd"))
-	if err != nil || len(paths) < 3 {
+	if err != nil || len(paths) < 1 {
 		t.Fatalf("found %d table files, %v", len(paths), err)
 	}
 	readers := make([]*table.Reader, len(paths))
 	latest := map[string]newest{}
+	entries := 0
 	for i, path := range paths {
 		b, err := os.ReadFile(path)
 		if err != nil {
@@ -90,6 +95,7 @@ func TestGoleveldbReadsShaleTables(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", filepath.Base(path), err)
 			}
+			entries++
 			if cur, ok := latest[string(user)]; !ok || seq > cur.seq {
 				latest[string(user)] = newest{seq, kind, bytes.Clone(it.Value()), i}
 			}
@@ -100,11 +106,18 @@ func TestGoleveldbReadsShaleTables(t *testing.T) {
 		it.Release()
 	}
 
+	if entries >= operations {
+		t.Fatalf("the tables hold %d entries for %d writes, so the compactions dropped nothing", entries, operations)
+	}
+
 	for user := range written {
 		got, ok := latest[user]
 		want, live := model[user]
 		if !ok {
-			t.Fatalf("user key %q has no entry in any table", user)
+			if live {
+				t.Fatalf("user key %q is live and has no entry in any table", user)
+			}
+			continue
 		}
 		if live != (got.kind == ikey.KindPut) || (live && !bytes.Equal(got.value, want)) {
 			t.Fatalf("user key %q: newest entry has kind %d and value %q, want live=%v value %q", user, got.kind, got.value, live, want)

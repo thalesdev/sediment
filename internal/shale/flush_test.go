@@ -13,9 +13,10 @@ import (
 )
 
 func TestFlushAndRead(t *testing.T) {
+	t.Parallel()
 	t.Run("Should read keys from tables, with overwrites and deletes in newer tables", func(t *testing.T) {
 		dir := t.TempDir()
-		db := openDB(t, dir, smallOptions())
+		db := openDB(t, dir, noCompactionOptions())
 		model := map[string]string{}
 		put := func(i int, gen string) {
 			key, value := string(keyN(i)), gen+value100(i)
@@ -61,7 +62,7 @@ func TestFlushAndRead(t *testing.T) {
 		scanTables(t, db)
 		closeDB(t, db)
 
-		db = openDB(t, dir, smallOptions())
+		db = openDB(t, dir, noCompactionOptions())
 		defer db.Close()
 		checkDirectory(t, dir, db)
 		check(db)
@@ -134,6 +135,7 @@ func awaitGate(t testing.TB, g *gate) {
 }
 
 func TestFlushWaiting(t *testing.T) {
+	t.Parallel()
 	t.Run("Should make a write wait while the frozen memtable is in the flush and let it go after", func(t *testing.T) {
 		g := newGate("table")
 		opts := smallOptions()
@@ -179,6 +181,7 @@ func TestFlushWaiting(t *testing.T) {
 }
 
 func TestFlushErrors(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"table", "commit", "cleanup"} {
 		for _, persistent := range []bool{false, true} {
 			testFlushError(t, stage, persistent)
@@ -260,6 +263,7 @@ func testFlushError(t *testing.T, stage string, persistent bool) {
 }
 
 func TestCloseAndFlush(t *testing.T) {
+	t.Parallel()
 	t.Run("Should wait for the flush in progress and write the frozen memtable before it returns", func(t *testing.T) {
 		g := newGate("table")
 		dir := t.TempDir()
@@ -373,6 +377,7 @@ func verifyImage(t *testing.T, db *DB, written int) {
 }
 
 func TestCrashWindows(t *testing.T) {
+	t.Parallel()
 	t.Run("Should remove a table that the MANIFEST does not name and read the data from the logs", func(t *testing.T) {
 		img := takeImage(t, "table")
 		before := tableFiles(t, img.dir)
@@ -423,7 +428,7 @@ func TestCrashWindows(t *testing.T) {
 		if img.after <= img.before {
 			t.Fatalf("the MANIFEST went from %d to %d bytes", img.before, img.after)
 		}
-		for cut := int64(0); cut < img.after-img.before; cut++ {
+		for cut := int64(0); cut < img.after-img.before; cut += int64(sweepStep(1, 4)) {
 			dir := t.TempDir()
 			copyDir(t, img.dir, dir)
 			if err := os.Truncate(filepath.Join(dir, manifestName), img.before+cut); err != nil {

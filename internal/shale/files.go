@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -19,6 +20,23 @@ const (
 	tmpSuffix = ".tmp"
 	lostName  = "lost"
 )
+
+// skipSync turns off the flush of files and directories to stable storage. Only
+// the tests of the package set it, to run faster. The tests that kill a process
+// do not need the flush, because the operating system keeps the data of a
+// process that dies.
+var skipSync atomic.Bool
+
+// syncFile is a file that can skip Sync when skipSync is set.
+type syncFile struct{ *os.File }
+
+// Sync flushes the file to stable storage, unless skipSync is set.
+func (f syncFile) Sync() error {
+	if skipSync.Load() {
+		return nil
+	}
+	return f.File.Sync()
+}
 
 // logName returns the name of the log file with number n.
 func logName(n uint64) string {

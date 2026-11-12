@@ -72,7 +72,7 @@ func (db *DB) writeManifest(version manifest.Version) error {
 		os.Remove(tmp)
 		return fmt.Errorf("shale: writing the MANIFEST: %w", err)
 	}
-	w := wal.NewWriter(f)
+	w := wal.NewWriter(syncFile{f})
 	if err := w.AddRecord(version.Compact().Encode(nil)); err != nil {
 		return fail(err)
 	}
@@ -91,8 +91,11 @@ func (db *DB) writeManifest(version manifest.Version) error {
 }
 
 // appendEdit adds edit to the MANIFEST and flushes it. The edit is a commit when
-// the flush returns.
+// the flush returns. The flush and the compaction can call it at the same time,
+// and it writes one edit at a time.
 func (db *DB) appendEdit(edit manifest.Edit) error {
+	db.manifestMu.Lock()
+	defer db.manifestMu.Unlock()
 	if err := db.manifestLog.AddRecord(edit.Encode(nil)); err != nil {
 		return fmt.Errorf("shale: writing the MANIFEST: %w", err)
 	}

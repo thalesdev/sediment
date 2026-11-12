@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/thalesdev/sediment/internal/ikey"
@@ -35,20 +36,73 @@ func newMemtable(wal uint64) *memtable {
 	}
 }
 
-// table is a table file that is open for reads.
+// table is a table file that is open for reads. It counts the read states that
+// hold it. When the count is 0 the table closes its file, and it removes the
+// file too if the table is obsolete.
 type table struct {
-	meta   manifest.TableMeta
-	file   *os.File
-	reader *sstable.Reader
+	meta     manifest.TableMeta
+	path     string
+	file     *os.File
+	reader   *sstable.Reader
+	refs     atomic.Int64
+	obsolete atomic.Bool
+}
+
+// unref drops one reference. The last reference closes the file, and removes it
+// if the table is obsolete. A failure to remove the file is not an error: the
+// next Open removes a file that the MANIFEST does not name.
+func (t *table) unref() {
+	if t.refs.Add(-1) != 0 {
+		return
+	}
+	t.file.Close()
+	if t.obsolete.Load() {
+		os.Remove(t.path)
+	}
 }
 
 // readState is what a read sees: the memtable, the frozen memtable if there is
-// one, and the tables from the newest to the oldest. A readState does not change
-// after the DB publishes it.
+// one, and the tables from the newest to the oldest by sequence number. A
+// readState does not change after the DB publishes it. It counts the readers
+// that use it, and the DB holds one reference while the state is the current one.
 type readState struct {
 	mem    *memtable
 	imm    *memtable
 	tables []*table
+	refs   atomic.Int64
+}
+
+// newReadState returns a state with one reference, which is the one of the DB.
+func newReadState(mem, imm *memtable, tables []*table) *readState {
+	s := &readState{mem: mem, imm: imm, tables: tables}
+	s.refs.Store(1)
+	return s
+}
+
+// tryAcquire adds a reference if the state still has one. It returns false if
+// the state already gave up its tables, and then the caller must load the state
+// again.
+func (s *readState) tryAcquire() bool {
+	for {
+		n := s.refs.Load()
+		if n <= 0 {
+			return false
+		}
+		if s.refs.CompareAndSwap(n, n+1) {
+			return true
+		}
+	}
+}
+
+// release drops one reference. When the last one goes, the state drops its
+// references on the tables.
+func (s *readState) release() {
+	if s.refs.Add(-1) != 0 {
+		return
+	}
+	for _, t := range s.tables {
+		t.unref()
+	}
 }
 
 // tableOptions returns the options of the tables of the DB.
@@ -78,7 +132,7 @@ func openTable(dir string, meta manifest.TableMeta) (*table, error) {
 		f.Close()
 		return nil, fmt.Errorf("shale: table %s: %w", name, err)
 	}
-	return &table{meta: meta, file: f, reader: reader}, nil
+	return &table{meta: meta, path: filepath.Join(dir, name), file: f, reader: reader}, nil
 }
 
 // lookupMemtable finds the newest version of user that the lookup key sees in m.

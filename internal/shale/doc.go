@@ -8,7 +8,9 @@
 // files of the database. Open reads the MANIFEST and the logs, so a database
 // recovers all the writes that returned before a crash.
 //
-// All tables are in level 0, and there is no compaction yet. The package also
-// defines the Iterator interface that the memtable, the tables and the merged
-// views implement.
+// A second goroutine compacts the tables with a size-tiered rule. All tables are
+// in level 0, and each table has a range of sequence numbers. The ranges of the
+// tables do not overlap, and this order tells which table is the newest. The
+// package also defines the Iterator interface that the memtable, the tables and
+// the merged views implement.
 package shale

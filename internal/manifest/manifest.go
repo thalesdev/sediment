@@ -18,6 +18,7 @@ const (
 	tagLastSeq        = 4
 	tagDeleteTable    = 6
 	tagAddTable       = 7
+	tagAddTableSeq    = 100
 
 	// MaxLevel is the highest level that an edit can name.
 	MaxLevel = 6
@@ -42,6 +43,16 @@ type TableMeta struct {
 
 	// Largest is the largest internal key of the table.
 	Largest []byte
+
+	// HasSeq tells if SmallestSeq and LargestSeq are known. A table that an
+	// edit adds with the tag of the LevelDB has no sequence range.
+	HasSeq bool
+
+	// SmallestSeq is the smallest sequence number that the table can hold.
+	SmallestSeq uint64
+
+	// LargestSeq is the largest sequence number that the table can hold.
+	LargestSeq uint64
 }
 
 // TableRef names one table file.
@@ -100,7 +111,11 @@ func (e Edit) Encode(dst []byte) []byte {
 		dst = binary.AppendUvarint(dst, d.Number)
 	}
 	for _, a := range e.Add {
-		dst = binary.AppendUvarint(dst, tagAddTable)
+		tag := uint64(tagAddTable)
+		if a.HasSeq {
+			tag = tagAddTableSeq
+		}
+		dst = binary.AppendUvarint(dst, tag)
 		dst = binary.AppendUvarint(dst, uint64(a.Level))
 		dst = binary.AppendUvarint(dst, a.Number)
 		dst = binary.AppendUvarint(dst, a.Size)
@@ -108,6 +123,10 @@ func (e Edit) Encode(dst []byte) []byte {
 		dst = append(dst, a.Smallest...)
 		dst = binary.AppendUvarint(dst, uint64(len(a.Largest)))
 		dst = append(dst, a.Largest...)
+		if a.HasSeq {
+			dst = binary.AppendUvarint(dst, a.SmallestSeq)
+			dst = binary.AppendUvarint(dst, a.LargestSeq)
+		}
 	}
 	return dst
 }
@@ -203,10 +222,18 @@ func Decode(data []byte) (Edit, error) {
 		case tagDeleteTable:
 			ref := TableRef{Level: d.level(), Number: d.uvarint()}
 			e.Delete = append(e.Delete, ref)
-		case tagAddTable:
+		case tagAddTable, tagAddTableSeq:
 			meta := TableMeta{Level: d.level(), Number: d.uvarint(), Size: d.uvarint()}
 			meta.Smallest = d.bytes()
 			meta.Largest = d.bytes()
+			if tag == tagAddTableSeq {
+				meta.HasSeq = true
+				meta.SmallestSeq = d.uvarint()
+				meta.LargestSeq = d.uvarint()
+				if meta.LargestSeq > ikey.MaxSeq || meta.SmallestSeq > meta.LargestSeq {
+					d.fail("sequence range %d to %d is not valid", meta.SmallestSeq, meta.LargestSeq)
+				}
+			}
 			e.Add = append(e.Add, meta)
 		default:
 			d.fail("tag %d is not known", tag)

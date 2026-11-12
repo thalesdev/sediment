@@ -42,10 +42,11 @@ func Open(dir string, opts Options) (*DB, error) {
 		return nil, err
 	}
 	db := &DB{
-		dir:       dir,
-		opts:      opts,
-		lock:      lock,
-		flushDone: make(chan struct{}),
+		dir:         dir,
+		opts:        opts,
+		lock:        lock,
+		flushDone:   make(chan struct{}),
+		compactDone: make(chan struct{}),
 	}
 	db.cond = sync.NewCond(&db.mu)
 	if err := db.open(); err != nil {
@@ -53,6 +54,7 @@ func Open(dir string, opts Options) (*DB, error) {
 		return nil, err
 	}
 	go db.flushLoop()
+	go db.compactLoop()
 	return db, nil
 }
 
@@ -95,6 +97,18 @@ func (db *DB) open() (err error) {
 		}
 		tables = append(tables, t)
 	}
+	for i, t := range tables {
+		if t.meta.HasSeq {
+			continue
+		}
+		if err := fillSeqRange(t); err != nil {
+			return err
+		}
+		version.Tables[0][i] = t.meta
+	}
+	if err := checkSeqRanges(version.Tables[0], version.LastSeq); err != nil {
+		return err
+	}
 
 	replayed := newMemtable(0)
 	last, entries, err := db.replay(replayed, files.logs, version)
@@ -126,6 +140,9 @@ func (db *DB) open() (err error) {
 	version.LogNumber = logNumber
 	version.NextFileNumber = db.nextFile.Load()
 	version.LastSeq = max(version.LastSeq, last)
+	if err := checkSeqRanges(version.Tables[0], version.LastSeq); err != nil {
+		return err
+	}
 	if err := db.writeManifest(version); err != nil {
 		return err
 	}
@@ -136,14 +153,14 @@ func (db *DB) open() (err error) {
 
 	slices.SortFunc(tables, func(a, b *table) int {
 		switch {
-		case a.meta.Number > b.meta.Number:
+		case a.meta.LargestSeq > b.meta.LargestSeq:
 			return -1
-		case a.meta.Number < b.meta.Number:
+		case a.meta.LargestSeq < b.meta.LargestSeq:
 			return 1
 		}
 		return 0
 	})
-	db.state.Store(&readState{mem: newMemtable(logNumber), tables: tables})
+	db.setState(newReadState(newMemtable(logNumber), nil, tables))
 	db.lastSeq.Store(version.LastSeq)
 	db.recovery.LastSeq = version.LastSeq
 	db.recovery.Tables = len(tables)
@@ -221,7 +238,7 @@ func (db *DB) startLog(n uint64) error {
 		return fmt.Errorf("shale: syncing the directory: %w", err)
 	}
 	db.file = f
-	db.log = wal.NewWriter(f)
+	db.log = wal.NewWriter(syncFile{f})
 	return nil
 }
 
@@ -266,8 +283,64 @@ func (db *DB) collect(files listing, version manifest.Version, manifestDropped i
 	return nil, syncDir(db.dir)
 }
 
+// fillSeqRange reads all the entries of t and sets the range of sequence numbers
+// in its description. It is for a table that the MANIFEST names with no range.
+func fillSeqRange(t *table) error {
+	it := t.reader.NewIterator()
+	defer it.Close()
+	smallest, largest := uint64(ikey.MaxSeq), uint64(0)
+	entries := 0
+	for it.SeekToFirst(); it.Valid(); it.Next() {
+		_, seq, _, err := ikey.Parse(it.Key())
+		if err != nil {
+			return fmt.Errorf("shale: table %s: %w", tableName(t.meta.Number), err)
+		}
+		smallest, largest = min(smallest, seq), max(largest, seq)
+		entries++
+	}
+	if err := it.Err(); err != nil {
+		return fmt.Errorf("shale: table %s: %w", tableName(t.meta.Number), err)
+	}
+	if entries == 0 {
+		return fmt.Errorf("shale: table %s has no entry: %w", tableName(t.meta.Number), manifest.ErrCorrupt)
+	}
+	t.meta.HasSeq, t.meta.SmallestSeq, t.meta.LargestSeq = true, smallest, largest
+	return nil
+}
+
+// checkSeqRanges checks that the ranges of sequence numbers of the tables do not
+// overlap, and that none goes past lastSeq. A table with no range is an error.
+// This order of the ranges is what lets a read order the tables by age.
+func checkSeqRanges(metas []manifest.TableMeta, lastSeq uint64) error {
+	sorted := slices.Clone(metas)
+	slices.SortFunc(sorted, func(a, b manifest.TableMeta) int {
+		switch {
+		case a.LargestSeq > b.LargestSeq:
+			return -1
+		case a.LargestSeq < b.LargestSeq:
+			return 1
+		}
+		return 0
+	})
+	for i, m := range sorted {
+		if !m.HasSeq {
+			return fmt.Errorf("shale: table %s has no sequence range: %w", tableName(m.Number), manifest.ErrCorrupt)
+		}
+		if m.LargestSeq > lastSeq {
+			return fmt.Errorf("shale: table %s has sequence number %d, above the last one, %d: %w", tableName(m.Number), m.LargestSeq, lastSeq, manifest.ErrCorrupt)
+		}
+		if i > 0 && sorted[i-1].SmallestSeq <= m.LargestSeq {
+			return fmt.Errorf("shale: tables %s and %s have sequence ranges that overlap: %w", tableName(sorted[i-1].Number), tableName(m.Number), manifest.ErrCorrupt)
+		}
+	}
+	return nil
+}
+
 // syncDir flushes the directory dir to stable storage.
 func syncDir(dir string) error {
+	if skipSync.Load() {
+		return nil
+	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return err

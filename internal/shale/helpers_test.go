@@ -134,6 +134,10 @@ func keyN(n int) []byte { return fmt.Appendf(nil, "key-%08d", n) }
 
 func smallOptions() Options { return Options{MemtableSize: 2048} }
 
+func noCompactionOptions() Options {
+	return Options{MemtableSize: 2048, disableCompaction: true}
+}
+
 func copyDir(t testing.TB, src, dst string) {
 	t.Helper()
 	if err := os.MkdirAll(dst, 0o755); err != nil {
@@ -174,6 +178,7 @@ func fileNames(t testing.TB, dir string) []string {
 
 func checkDirectory(t testing.TB, dir string, db *DB) {
 	t.Helper()
+	waitQuiet(t, db)
 	l, err := listDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -210,10 +215,28 @@ func waitIdle(t testing.TB, db *DB) {
 	}
 }
 
+func waitQuiet(t testing.TB, db *DB) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		state := db.state.Load()
+		_, planned := pickCompaction(tableInfos(state.tables))
+		if state.imm == nil && !db.compacting.Load() && (!planned || db.opts.disableCompaction) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the flush and the compaction did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func scanTables(t testing.TB, db *DB) {
 	t.Helper()
+	state := db.acquireState()
+	defer state.release()
 	seen := map[string]bool{}
-	for _, tbl := range db.state.Load().tables {
+	for _, tbl := range state.tables {
 		it := tbl.reader.NewIterator()
 		var previous []byte
 		for it.SeekToFirst(); it.Valid(); it.Next() {
@@ -240,4 +263,11 @@ func scanTables(t testing.TB, db *DB) {
 
 func value100(i int) string {
 	return fmt.Sprintf("value-%06d-%s", i, strings.Repeat("v", 80))
+}
+
+func sweepStep(full, short int) int {
+	if testing.Short() {
+		return short
+	}
+	return full
 }

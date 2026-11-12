@@ -19,8 +19,11 @@ import (
 func flushedDB(t *testing.T) (string, int) {
 	t.Helper()
 	dir := t.TempDir()
-	db := openDB(t, dir, smallOptions())
-	const written = 400
+	db := openDB(t, dir, noCompactionOptions())
+	written := 400
+	if testing.Short() {
+		written = 150
+	}
 	for i := range written {
 		mustPut(t, db, string(keyN(i)), value100(i))
 	}
@@ -67,6 +70,7 @@ func assertOpenFails(t *testing.T, dir string, target error) {
 }
 
 func TestOpenErrors(t *testing.T) {
+	t.Parallel()
 	t.Run("Should fail and remove nothing for a table that the MANIFEST names and that is missing", func(t *testing.T) {
 		dir, _ := flushedDB(t)
 		tables := tableFiles(t, dir)
@@ -133,6 +137,7 @@ func TestOpenErrors(t *testing.T) {
 }
 
 func TestMigrationFromLogsOnly(t *testing.T) {
+	t.Parallel()
 	t.Run("Should open a directory that has only log files and make a MANIFEST and a table", func(t *testing.T) {
 		dir := t.TempDir()
 		writeLog(t, dir, 1, batchBytes(1, "a", "1"), batchBytes(2, "b", "2"))
@@ -155,6 +160,7 @@ func TestMigrationFromLogsOnly(t *testing.T) {
 }
 
 func TestMidManifestCorruption(t *testing.T) {
+	t.Parallel()
 	t.Run("Should move the tables that the MANIFEST no longer names to the lost directory and never remove them", func(t *testing.T) {
 		dir, _ := flushedDB(t)
 		tables := tableFiles(t, dir)

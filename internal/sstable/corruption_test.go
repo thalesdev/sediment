@@ -170,12 +170,19 @@ func checkAgainst(t *testing.T, data []byte, want []kv, what string) {
 	}
 }
 
+func sweepStep(full, short int) int {
+	if testing.Short() {
+		return short
+	}
+	return full
+}
+
 func TestReaderBitFlips(t *testing.T) {
 	t.Run("Should return a correct result or an error after the flip of any byte", func(t *testing.T) {
 		entries := numbered(120, 100)
 		good := writeTable(t, Options{BlockSize: 512}, entries)
 		data := bytes.Clone(good)
-		for pos := range data {
+		for pos := 0; pos < len(data); pos += sweepStep(1, 4) {
 			data[pos] ^= 0xff
 			checkAgainst(t, data, entries, "flip at "+strconv.Itoa(pos))
 			data[pos] ^= 0xff
@@ -186,7 +193,7 @@ func TestReaderBitFlips(t *testing.T) {
 		entries := numbered(40, 60)
 		good := writeTable(t, Options{BlockSize: 256}, entries)
 		data := bytes.Clone(good)
-		for pos := range data {
+		for pos := 0; pos < len(data); pos += sweepStep(1, 5) {
 			for bit := range 8 {
 				data[pos] ^= 1 << bit
 				checkAgainst(t, data, entries, "flip at "+strconv.Itoa(pos)+" bit "+strconv.Itoa(bit))
@@ -197,7 +204,7 @@ func TestReaderBitFlips(t *testing.T) {
 
 	t.Run("Should return an error for a table that is cut at any size", func(t *testing.T) {
 		good := writeTable(t, Options{BlockSize: 512}, numbered(120, 100))
-		for n := range len(good) {
+		for n := 0; n < len(good); n += sweepStep(1, 3) {
 			if _, err := openBounded(t, good[:n]); err == nil {
 				t.Fatalf("Open accepted a table cut to %d of %d bytes", n, len(good))
 			}
