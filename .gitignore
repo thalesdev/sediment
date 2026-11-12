@@ -1,0 +1,15 @@
+# Go
+*.test
+*.out
+coverage.out
+*.prof
+
+# Editors and systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local files
+*.local
+/tmp/

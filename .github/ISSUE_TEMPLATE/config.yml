@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/thalesdev/sediment/security/advisories/new
+    about: Report a vulnerability or a way to lose data privately. Do not open a public issue.
