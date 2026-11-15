@@ -97,24 +97,46 @@ Reproduce them with `make bench-compare`.
 
 ## How it works
 
+A command goes through the server before it reaches the engine:
+
+```
+ client
+   |   TCP, or TLS 1.3 with an optional client certificate (mTLS)
+   v
+ connection        limit on clients, time to send a command, time to take a reply,
+   |               and smaller limits on the size of a command before sign in
+   v
+ command check     unknown command, number of arguments, AUTH, then the ACL
+   |               (categories such as @read, @write and @dangerous)
+   v
+ command layer     size of the key, lock per key for a read-modify-write,
+   |               TTL tag of the value, limit on the size of a reply
+   v
+ Shale             the engine, below
+```
+
+Inside Shale a write is a sequence, and a read looks at a few places:
+
 ```
                      Put / Delete                         Get
                           |                                |
                     write queue (group commit)       memtable
                           |                          frozen memtable
-              +-----------+-----------+              tables, newest first
-              |                       |                    |
-        write-ahead log          memtable (skip list)      +--> bloom filter
-        (one record per group)         |                   +--> index block
-                                       | full              +--> one data block
-                                       v                        ^
-                              flush (background)           block cache
-                                       |                   (the file, on a miss)
-                                       v
-                       SSTables ---> MANIFEST (one edit per change)
+                1. room for the group?               tables, newest first
+                   (freeze the memtable if it              |
+                    is full, wait for a flush or           +--> bloom filter
+                    the compaction if they lag)            +--> index block
+                          |                                +--> one data block
+                2. write-ahead log                                ^
+                   (one record per group)                    block cache
+                          |                                  (the file, on a miss)
+                3. memtable (skip list)
                           |
-                          v
-                 size-tiered compaction (background)
+                4. last sequence number published, the write returns
+
+ background:   frozen memtable --flush--> SSTable ---> MANIFEST (one edit per change)
+               SSTables --size-tiered compaction--> fewer SSTables, with the old
+               versions of a key and the expired keys dropped
 ```
 
 A data block comes from the block cache when it is there, and from the file when it
