@@ -294,5 +294,47 @@ clients, two rounds. Redis with `--appendonly yes --appendfsync no`.
 - Redis runs commands on one thread and sediment on many, and this is one machine, one
   value size and `SET` only. Redis was not run with `io-threads`.
 
-Next steps: a median of at least 8 rounds with `GET`, a mixed load and Redis with
-`io-threads 4`, and a profile of what varies in `-P 64`.
+### Per core: sediment spends 3 to 6 times the CPU of Redis per command
+
+The comparisons above use all the cores of the machine for sediment (4 to 9 cores
+busy) and one thread for Redis, which runs its commands on one. A server does not
+always have that many cores, so the fair measure is the CPU that each server uses.
+`redis-benchmark` 8.10.3, 4 client threads, 50 clients, 3,000,000 keys of 100 bytes,
+5 rounds, medians. The CPU is the user and system time of the server process, read
+with `ps` before and after each run. `sed-1` and `sed-2` are sediment with
+`GOMAXPROCS` 1 and 2, and `redis-io4` is Redis with `--io-threads 4`. Redis has
+`--appendonly yes --appendfsync no`.
+
+| | Redis | redis-io4 | sed-1 | sed-2 | sed-all |
+|---|---:|---:|---:|---:|---:|
+| `GET`, no pipeline, per second | 65,931 | 124,968 | 49,583 | 109,075 | 127,605 |
+| `SET`, no pipeline, per second | 62,494 | 117,628 | 39,990 | 95,226 | 115,340 |
+| `GET`, `-P 16`, per second | 749,906 | 1,599,573 | 208,652 | 363,570 | 856,531 |
+| `SET`, `-P 16`, per second | 489,596 | 1,090,710 | 212,006 | 406,586 | 666,444 |
+| `GET`, `-P 64`, per second | 1,599,573 | 2,400,000 | 255,134 | 461,290 | 999,666 |
+| `SET`, `-P 64`, per second | 773,694 | 1,043,296 | 295,624 | 533,143 | 799,786 |
+| `GET`, `-P 16`, CPU us per command | 1.33 | 1.83 | 4.83 | 5.50 | 10.50 |
+| `SET`, `-P 16`, CPU us per command | 1.83 | 2.17 | 4.50 | 4.33 | 6.00 |
+| `GET`, `-P 64`, CPU us per command | 0.50 | 0.67 | 3.83 | 4.33 | 9.50 |
+| `SET`, `-P 64`, CPU us per command | 1.17 | 1.17 | 3.33 | 3.33 | 4.33 |
+| `GET`, no pipeline, cores used | 1.01 | 2.92 | 0.99 | 1.96 | 5.44 |
+| `GET`, `-P 16`, cores used | 1.00 | 2.93 | 0.99 | 2.00 | 8.85 |
+
+- With one core each, Redis does 1.3 to 1.6 times our rate without a pipeline, and 2.3
+  to 6.3 times with one.
+- sediment on all the cores matches Redis with `io-threads 4` only without a pipeline,
+  and it uses 5.4 cores for what Redis does with 2.9. With a pipeline Redis with
+  `io-threads` is ahead at every depth.
+- So the earlier ratios of 1.3 to 1.9 times Redis came from using more cores, and they
+  are not an efficiency.
+- Cautions: the p99 column of this script is wrong and was not used. `ps` has a
+  resolution of one second. `GOMAXPROCS` does not pin threads, but the cores column
+  shows 0.96 to 1.00. The Redis `GET` is from memory and the sediment `GET` reads
+  tables on disk for most of the 3,000,000 keys, and it is a part of the gap. The
+  `io-threads` numbers with `-P 64` are probably limited by the client.
+
+The medians of 8 rounds with all the cores, `SET` only (`batch3`): `-P 16`, Redis 499,875
+and sediment 639,744; `-P 64`, Redis 799,360 and sediment 761,542.
+
+Next step: a CPU profile with one core, in a `SET` phase and a `GET` phase with a
+pipeline of 16, to find where the 3 to 6 microseconds per command go.

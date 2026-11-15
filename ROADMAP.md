@@ -39,6 +39,7 @@ sediment is a key-value database that speaks the Redis protocol (RESP), built on
 ## Next
 
 ### 8. Server performance
+- [ ] **CPU per command**: with one core each, Redis does 2.3 to 6.3 times our rate with a pipeline (0.5 to 1.8 us of CPU per command against 3.3 to 10.5). Profile one core in a `SET` phase and a `GET` phase, and reduce what the profile shows (allocations in the parser and the reply, the Shale write path, the table read on `GET`). Each change with its before and after.
 - [ ] Profile the server without a pipeline: 0.5 ms per command with 50 clients is slow for loopback, and the cause is not known.
 - [ ] Block pool or block cache for `GET` (about 4.9 KiB per command), after the profile confirms it.
 - [x] Run the consecutive `SET` commands of a pipeline as one write (`SetMany`), after the numbers showed one wait for the log per command.
