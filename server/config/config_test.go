@@ -38,6 +38,14 @@ func TestParse(t *testing.T) {
 	})
 }
 
+func TestDefaults(t *testing.T) {
+	t.Run("Should use a memtable of 64 MiB", func(t *testing.T) {
+		if got := Defaults().MemtableSize; got != 64<<20 {
+			t.Fatalf("got %d", got)
+		}
+	})
+}
+
 func TestValidate(t *testing.T) {
 	t.Run("Should need the certificate and the key together", func(t *testing.T) {
 		c := Defaults()

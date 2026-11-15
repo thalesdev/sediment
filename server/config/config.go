@@ -32,7 +32,9 @@ type Config struct {
 	// Sync makes each write wait for the disk. The default is false.
 	Sync bool
 
-	// MemtableSize is the size of the memtable in bytes, or 0 for the default.
+	// MemtableSize is the size of the memtable in bytes. The default is 64 MiB.
+	// A server writes much faster than the 4 MiB of the engine default, and a
+	// small memtable makes the writes wait for the flush.
 	MemtableSize int
 
 	// MaxClients is the largest number of connections, or 0 for the default.
@@ -81,7 +83,7 @@ type Config struct {
 // Defaults returns the default settings: loopback only, port 6379, no TLS, no
 // users.
 func Defaults() Config {
-	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", LogLevel: "info"}
+	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", MemtableSize: 64 << 20, LogLevel: "info"}
 }
 
 // Parse reads a file of "key value" lines into c. A line that is empty or that

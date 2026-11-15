@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/thalesdev/sediment/internal/bloom"
 )
@@ -147,28 +148,53 @@ func checkFilter(fb []byte) (usable bool, err error) {
 	return fb[len(fb)-1] == filterBaseLg, nil
 }
 
+// maxPooledBlock is the largest buffer, in bytes, that goes back to blockPool. A
+// larger one is left to the garbage collector, so that one big block does not
+// stay in the pool.
+const maxPooledBlock = 64 << 10
+
+// blockPool holds buffers for the blocks that Find reads and does not keep.
+var blockPool = sync.Pool{New: func() any {
+	b := make([]byte, 0, 4<<10+blockTrailerSize)
+	return &b
+}}
+
 // readBlock reads the block at h and checks its type and checksum. The caller owns
 // the returned slice.
 func (r *Reader) readBlock(h blockHandle) ([]byte, error) {
+	block, _, err := r.readBlockBuf(h, nil)
+	return block, err
+}
+
+// readBlockBuf reads the block at h like readBlock, into buf if buf is large
+// enough, and into a new slice if it is not. It returns the block and the slice
+// that holds it with its trailer, which the caller can reuse. The block is valid
+// only while the caller does not reuse that slice.
+func (r *Reader) readBlockBuf(h blockHandle, buf []byte) (block, backing []byte, err error) {
 	if h.size > uint64(r.size) || h.offset > uint64(r.size)-h.size ||
 		h.offset+h.size > uint64(r.size)-blockTrailerSize {
-		return nil, corruptf("block %+v is outside of the %d byte table", h, r.size)
+		return nil, buf, corruptf("block %+v is outside of the %d byte table", h, r.size)
 	}
-	buf := make([]byte, h.size+blockTrailerSize)
+	need := int(h.size) + blockTrailerSize
+	if cap(buf) >= need {
+		buf = buf[:need]
+	} else {
+		buf = make([]byte, need)
+	}
 	if n, err := r.src.ReadAt(buf, int64(h.offset)); n < len(buf) {
 		if err == nil || err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
-		return nil, fmt.Errorf("reading block %+v: %w", h, err)
+		return nil, buf, fmt.Errorf("reading block %+v: %w", h, err)
 	}
 	block, trailer := buf[:h.size], buf[h.size:]
 	if got, want := binary.LittleEndian.Uint32(trailer[1:]), blockChecksum(block, trailer[0]); got != want {
-		return nil, corruptf("block %+v has checksum %#08x, want %#08x", h, got, want)
+		return nil, buf, corruptf("block %+v has checksum %#08x, want %#08x", h, got, want)
 	}
 	if trailer[0] != blockTypeNoCompression {
-		return nil, corruptf("block %+v uses compression type %d, which is not supported", h, trailer[0])
+		return nil, buf, corruptf("block %+v uses compression type %d, which is not supported", h, trailer[0])
 	}
-	return block, nil
+	return block, buf, nil
 }
 
 // mayContain uses the filter of the data block at blockOffset. It returns true if
@@ -204,9 +230,9 @@ func (r *Reader) mayContain(blockOffset uint64, key []byte) bool {
 // index holds a separator that is greater than the last key of the block,
 // because a separator is less than the first key of the next block.
 //
-// The slices foundKey and value are borrowed. They are valid only until the
-// next call of the caller to the Reader, and the caller must not change them. To
-// keep them, the caller must copy them.
+// The slices foundKey and value are copies that the caller owns. Find reads the
+// block into a buffer from a pool and gives the buffer back, so that a lookup does
+// not allocate a whole block.
 func (r *Reader) Find(key []byte) (foundKey, value []byte, found bool, err error) {
 	index := r.newIndexIter()
 	index.Seek(key)
@@ -220,7 +246,14 @@ func (r *Reader) Find(key []byte) (foundKey, value []byte, found bool, err error
 	if !r.mayContain(h.offset, r.opts.FilterKey(key)) {
 		return nil, nil, false, nil
 	}
-	block, err := r.readBlock(h)
+	pooled := blockPool.Get().(*[]byte)
+	block, backing, err := r.readBlockBuf(h, *pooled)
+	defer func() {
+		if cap(backing) <= maxPooledBlock {
+			*pooled = backing[:0]
+			blockPool.Put(pooled)
+		}
+	}()
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -232,18 +265,22 @@ func (r *Reader) Find(key []byte) (foundKey, value []byte, found bool, err error
 	if !data.Valid() {
 		return nil, nil, false, data.Err()
 	}
-	return data.Key(), data.Value(), true, nil
+	k, v := data.Key(), data.Value()
+	both := make([]byte, len(k)+len(v))
+	copy(both, k)
+	copy(both[len(k):], v)
+	return both[:len(k):len(k)], both[len(k):], true, nil
 }
 
-// Get returns a copy of the value for key, and reports if the key exists. It
-// uses Find, so it reads one data block at most, and none if the filter shows
-// that the key is not in the table. The key of the entry must be equal to key.
+// Get returns the value for key, and reports if the key exists. It uses Find, so
+// it reads one data block at most, and none if the filter shows that the key is
+// not in the table. The key of the entry must be equal to key.
 func (r *Reader) Get(key []byte) (value []byte, found bool, err error) {
 	foundKey, v, found, err := r.Find(key)
 	if err != nil || !found || r.opts.Compare(foundKey, key) != 0 {
 		return nil, false, err
 	}
-	return bytes.Clone(v), true, nil
+	return v, true, nil
 }
 
 // Iterator iterates over all entries of a table in key order. It has the same

@@ -149,3 +149,26 @@ func TestReaderFind(t *testing.T) {
 		}
 	})
 }
+
+func TestFindOwnsItsResult(t *testing.T) {
+	t.Run("Should keep the result valid after later lookups", func(t *testing.T) {
+		entries := versionedEntries(40)
+		r := openVersioned(t, &countingReaderAt{b: writeVersioned(t, entries)})
+		type saved struct{ key, value, wantKey, wantValue []byte }
+		var results []saved
+		for i := range 40 {
+			lookup := ikey.AppendLookup(nil, fmt.Appendf(nil, "user-%04d", i), 100)
+			key, value, found, err := r.Find(lookup)
+			if err != nil || !found {
+				t.Fatalf("Find: %v, %v", found, err)
+			}
+			want, _ := firstAtOrAfter(entries, lookup)
+			results = append(results, saved{key, value, want.key, want.value})
+		}
+		for i, s := range results {
+			if !bytes.Equal(s.key, s.wantKey) || !bytes.Equal(s.value, s.wantValue) {
+				t.Fatalf("result %d changed: %q %q, want %q %q", i, s.key, s.value, s.wantKey, s.wantValue)
+			}
+		}
+	})
+}
