@@ -106,7 +106,11 @@ func scan(env *Env, c *Client, args [][]byte) resp.Value {
 			if n < 1 {
 				return replySyntax
 			}
-			count = int(min(n, maxScanCount))
+			if n > maxScanCount {
+				count = maxScanCount
+			} else {
+				count = int(n)
+			}
 		case "TYPE":
 			allTypes = strings.EqualFold(string(opts[i+1]), "string")
 		default:
