@@ -359,6 +359,42 @@ func TestGoRedisClient(t *testing.T) {
 		})
 	}
 
+	t.Run("Should run the remaining string commands with go-redis", func(t *testing.T) {
+		ctx := context.Background()
+		rdb := redis.NewClient(&redis.Options{Addr: addr})
+		defer rdb.Close()
+		if err := rdb.SetEx(ctx, "more:ex", "v", 30*time.Second).Err(); err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := rdb.MSetNX(ctx, "more:a", "1", "more:b", "2").Result(); err != nil || !ok {
+			t.Fatalf("MSETNX: %v, %v", ok, err)
+		}
+		if ok, err := rdb.MSetNX(ctx, "more:c", "3", "more:a", "9").Result(); err != nil || ok {
+			t.Fatalf("MSETNX over an existing key: %v, %v", ok, err)
+		}
+		if got, err := rdb.GetEx(ctx, "more:ex", time.Minute).Result(); err != nil || got != "v" {
+			t.Fatalf("GETEX: %q, %v", got, err)
+		}
+		if got, err := rdb.GetRange(ctx, "more:ex", 0, 0).Result(); err != nil || got != "v" {
+			t.Fatalf("GETRANGE: %q, %v", got, err)
+		}
+		if n, err := rdb.SetRange(ctx, "more:ex", 3, "x").Result(); err != nil || n != 4 {
+			t.Fatalf("SETRANGE: %d, %v", n, err)
+		}
+		if f, err := rdb.IncrByFloat(ctx, "more:f", 2.5).Result(); err != nil || f != 2.5 {
+			t.Fatalf("INCRBYFLOAT: %v, %v", f, err)
+		}
+		if err := rdb.Rename(ctx, "more:a", "more:z").Err(); err != nil {
+			t.Fatalf("RENAME: %v", err)
+		}
+		if ok, err := rdb.RenameNX(ctx, "more:z", "more:b").Result(); err != nil || ok {
+			t.Fatalf("RENAMENX: %v, %v", ok, err)
+		}
+		if n, err := rdb.Unlink(ctx, "more:z", "more:b").Result(); err != nil || n != 2 {
+			t.Fatalf("UNLINK: %d, %v", n, err)
+		}
+	})
+
 	t.Run("Should pipeline many commands with go-redis", func(t *testing.T) {
 		ctx := context.Background()
 		rdb := redis.NewClient(&redis.Options{Addr: addr})

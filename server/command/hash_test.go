@@ -275,3 +275,26 @@ func TestAllocUID(t *testing.T) {
 		}
 	})
 }
+
+func TestRenameKeepsNoOrphans(t *testing.T) {
+	for _, pair := range [][2]string{{"{t}a", "{t}b"}, {"alpha", "omega"}} {
+		t.Run("Should leave no element behind after RENAME of "+pair[0], func(t *testing.T) {
+			te := newTypedEnv(t)
+			te.run("HSET", pair[0], "a", "1", "b", "2", "c", "3")
+			te.run("HSET", pair[1], "x", "1", "y", "2")
+			wantReply(t, te.run("RENAME", pair[0], pair[1]), resp.KindSimple, "OK")
+			if n := te.sweep(); n != 0 {
+				t.Fatalf("the sweeper found %d dead collections after RENAME, so it left orphans", n)
+			}
+			rec, err := te.env.loadRecord([]byte(pair[1]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			uid, _ := rec.collection()
+			all := te.allElements()
+			if len(all) != 1 || all[uid] != 3 {
+				t.Fatalf("elements by collection: %v, want 3 under %d", all, uid)
+			}
+		})
+	}
+}
