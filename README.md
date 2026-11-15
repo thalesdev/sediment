@@ -24,13 +24,30 @@ the logo is what you find when you dig.
 
 ## Status
 
-The storage engine is complete and measured. The server is not built yet.
+The storage engine and a first RESP server are done. The server has not been run
+with `redis-cli` or `redis-benchmark` yet, only with its own tests and the go-redis
+client.
 
 | Part | State |
 |---|---|
-| Shale, the storage engine | Done: write-ahead log, memtable, SSTables, MANIFEST, compaction, group commit |
-| `sedimentd`, the RESP server | Not started, see the [roadmap](ROADMAP.md) |
+| Shale, the storage engine | Done: write-ahead log, memtable, SSTables, MANIFEST, compaction, group commit, atomic batches |
+| `resp`, the protocol | Done: RESP2 and RESP3, fuzzed, with limits on every size |
+| `sedimentd`, the RESP server | Done for strings: `GET`, `SET`, `DEL`, `EXISTS`, `MGET`, `MSET`, pipelining, `HELLO 3` |
+| Security | TLS 1.3 and mTLS, users with an ACL file, safe defaults. Key patterns and run-time `ACL SETUSER` come later |
 | Public Go API | Not yet: Shale lives in `internal/shale` until the server shapes it |
+
+The commands, types and ACL features that work, and the ones that do not, are in
+[docs/RESP.md](docs/RESP.md). The threat model is in [SECURITY.md](SECURITY.md).
+
+## Run it
+
+```bash
+go run ./cmd/sedimentd -dir ./data
+```
+
+It listens on `127.0.0.1:6379`, with no TLS and no users. It refuses to listen on
+an address that other machines reach unless it has TLS or a sign in. Settings go
+in a file with `-config`, in the style of `redis.conf`.
 
 **Finish line:** `redis-cli` connects and runs `GET`, `SET` and `DEL`,
 `redis-benchmark` runs against the server, and no acknowledged write is lost
@@ -117,7 +134,10 @@ of their ages.
 | `internal/manifest` | The record of a change of the set of table files |
 | `internal/batch` | The write batch format |
 | `internal/ikey` | The internal key |
-| `compat` | A separate module: compatibility tests and benchmarks against goleveldb |
+| `resp` | The RESP2 and RESP3 reader and writer, without the network |
+| `server` | The connection loop, the commands (`server/command`), the users (`server/acl`) and the settings (`server/config`) |
+| `cmd/sedimentd` | The server program |
+| `compat` | A separate module: compatibility tests and benchmarks against goleveldb, and the go-redis client against the server |
 
 ## Development
 
@@ -138,8 +158,9 @@ change it).
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md). Next is the RESP server, then the items of the
-backlog, each with the reason it would be picked up.
+See [ROADMAP.md](ROADMAP.md). Next is a check with the real `redis-cli` and
+`redis-benchmark`, then the items of the backlog, each with the reason it would be
+picked up.
 
 ## License
 

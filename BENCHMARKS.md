@@ -116,3 +116,25 @@ entries, with one restart for each entry. A test of the constructor alone takes
 22.7 µs for 27,000 restarts, which is almost all of the 24 µs. The state after
 `WaitIdle` is 4 tables (one of 103 MB and three of 2 MB), and the filter makes
 the reads of the other tables rare.
+
+## Server (`sedimentd`)
+
+`go test ./server -bench Benchmark -benchtime=2s -benchmem`. The client and the
+server run in the same process, with 11 client connections, on loopback, over a
+database of 100,000 keys of 16 bytes with values of 100 bytes. The time is the
+wall time per command across all the connections, and the client uses part of the
+CPU. These numbers are a first measure and not a comparison. `redis-benchmark` was
+not available when they were taken.
+
+| Workload | ns/op | Commands per second | Allocations per command |
+|---|---:|---:|---:|
+| `GET` | 13074 | 76,500 | 17 |
+| `GET`, pipeline of 16 | 1851 | 540,000 | 17 |
+| `SET` | 16956 | 59,000 | 14 |
+| `SET`, pipeline of 16 | 4787 | 209,000 | 14 |
+
+The pipeline is 7 times faster for `GET`, because a round trip on loopback costs more
+than the work of one command. A `GET` allocates about 4.9 KiB. This is
+close to the 5373 bytes of a Shale `ReadRandom`, so it is probably the data block
+that a table read allocates, which a block cache would remove. This was not
+profiled, and nothing was optimized yet.

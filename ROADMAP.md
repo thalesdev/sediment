@@ -25,16 +25,21 @@ sediment is a key-value database that speaks the Redis protocol (RESP), built on
   - Fewer allocations on the write path (7 to 3 per write).
   - Group commit for concurrent writers (`FillSyncParallel` from 2250 to 602 us).
 
+### 7. Server (`sedimentd`)
+- [x] **`resp`**: RESP2 and RESP3 reader and writer without the network, a limit on every size, allocation that follows the bytes that arrive, fuzzed. See [docs/RESP.md](docs/RESP.md).
+- [x] **Command layer** separate from the protocol, so another protocol can be added later.
+- [x] **Commands**: `GET`, `SET` (`NX`, `XX`, `GET`), `DEL`, `EXISTS`, `MGET`, `MSET`, `PING`, `ECHO`, `QUIT`, `SELECT`, `HELLO`, `CLIENT`, `COMMAND`, `INFO`, `CONFIG GET`.
+- [x] **Atomic multi-key writes** in Shale (`DB.Write`), for `MSET` and `DEL` of many keys.
+- [x] **Pipelining**, with a flush only when the reader would block.
+- [x] **Per-connection panic recovery**, one goroutine per connection.
+- [x] **Security**: TLS 1.3 and mTLS, users from an ACL file (PBKDF2 passwords, command and category rules, fail closed), tighter limits before sign in, slow down after failed sign ins, safe bind by default, HTTP cross-protocol guard. See [SECURITY.md](SECURITY.md).
+- [x] **Benchmarks** with and without pipelining (`make bench-server`).
+
 ## Next
 
-### 7. Server (`sedimentd`)
-- [ ] RESP2 over TCP, with `net` from the standard library and one goroutine per connection.
-- [ ] A command layer separate from the protocol parser, so another protocol can be added later.
-- [ ] `GET`, `SET`, `DEL`, `PING`, plus whatever `redis-cli` and `redis-benchmark` need to start.
-- [ ] Pipelining.
-- [ ] `INFO` backed by the engine metrics.
-- [ ] Per-connection panic recovery.
-- [ ] Benchmarks with and without pipelining.
+### 8. Finish line
+- [ ] Run the real `redis-cli` and `redis-benchmark` against `sedimentd` (they were not installed where the server was built, so it was checked with go-redis and raw clients only).
+- [ ] A kill -9 test with `redis-benchmark` writing, then a reopen.
 
 ## Backlog
 
@@ -55,3 +60,9 @@ Each item has the reason it would be picked up.
 | OpenTelemetry at request level in the server, sampled | if the server needs distributed tracing |
 | Snappy compression | if disk usage matters more than CPU |
 | Block cache | if a larger working set makes `ReadRandom` slow (it is 0.8x of goleveldb with 1M keys) |
+| ACL phase 2: key patterns (`~prefix:*`, `%R~`, `%W~`), `ACL SETUSER`, `DELUSER`, `SAVE`, `LOG`, selectors, rules for subcommands, user from the CN of a client certificate | when a deployment needs more than one kind of client on the same data |
+| Rate limit of sign in attempts per address, and a log of denied commands | before the server is exposed to untrusted networks |
+| TTL in the engine and `SET ... EX`, `EXPIRE`, `TTL` | when a client needs keys that expire |
+| Atomic read-modify-write on a key: `INCR`, `DECR`, `APPEND`, `SETNX`, `GETSET` | when a client needs counters (the lock per key already exists) |
+| `CLIENT LIST`, `CLIENT KILL`, slow log | when an operator needs to see and cut clients |
+| RESP3 attributes and streamed strings | only if a client needs them |
