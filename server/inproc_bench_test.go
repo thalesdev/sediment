@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -126,4 +127,44 @@ func BenchmarkInprocGetShaleMemtable(b *testing.B) {
 }
 func BenchmarkInprocGetShaleTables(b *testing.B) {
 	inproc(b, shaleStore(b, 1000000, 1<<20), "GET", 1000000)
+}
+
+func inprocConns(b *testing.B, store command.Store, verb string, space, conns int) {
+	b.Helper()
+	const depth = 16
+	s, err := New(Options{Store: store, Log: quietLog()})
+	if err != nil {
+		b.Fatal(err)
+	}
+	per := (b.N/conns + depth - 1) / depth
+	cs := make([]*conn, conns)
+	ncs := make([]*loopConn, conns)
+	for i := range cs {
+		chunks := buildChunks(verb, depth, 512, space)
+		for j := range chunks {
+			chunks[j], chunks[(j+i)%len(chunks)] = chunks[(j+i)%len(chunks)], chunks[j]
+		}
+		ncs[i] = &loopConn{chunks: chunks, total: per}
+		cs[i] = s.newConn(ncs[i])
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	var wg sync.WaitGroup
+	for _, c := range cs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.loop()
+		}()
+	}
+	wg.Wait()
+	b.StopTimer()
+}
+
+func BenchmarkInprocSetShale50Conns(b *testing.B) {
+	inprocConns(b, shaleStore(b, 1000, 64<<20), "SET", 3000000, 50)
+}
+
+func BenchmarkInprocGetShaleTables50Conns(b *testing.B) {
+	inprocConns(b, shaleStore(b, 1000000, 1<<20), "GET", 1000000, 50)
 }

@@ -159,6 +159,22 @@ func TestBatchedSet(t *testing.T) {
 		wantBulk(t, dial(t, addr).do("GET", "pf"), "2")
 	})
 
+	t.Run("Should report how many commands each batch held", func(t *testing.T) {
+		c := dial(t, addr)
+		batches, cmds := stat(t, c, "set_batches"), stat(t, c, "set_batched_commands")
+		pipe(t, c, []string{"SET", "r1", "1"}, []string{"SET", "r2", "2"}, []string{"SET", "r3", "3"}, []string{"SET", "r4", "4"})
+		for range 4 {
+			wantSimple(t, c.read(), "OK")
+		}
+		gotBatches, gotCmds := stat(t, c, "set_batches")-batches, stat(t, c, "set_batched_commands")-cmds
+		if gotCmds != 4 || gotBatches < 1 || gotBatches > 4 {
+			t.Fatalf("got %d commands in %d batches, want 4 commands", gotCmds, gotBatches)
+		}
+		if stat(t, c, "read_calls") == 0 || stat(t, c, "read_bytes") == 0 {
+			t.Fatal("the reads were not counted")
+		}
+	})
+
 	t.Run("Should count each command of a batch", func(t *testing.T) {
 		c := dial(t, addr)
 		before := stat(t, c, "total_commands_processed")

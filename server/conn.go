@@ -50,7 +50,10 @@ func (f flushReader) Read(p []byte) (int, error) {
 			return 0, err
 		}
 	}
-	return f.c.nc.Read(p)
+	n, err := f.c.nc.Read(p)
+	f.c.s.readCalls.Add(1)
+	f.c.s.readBytes.Add(uint64(n))
+	return n, err
 }
 
 // newConn returns the state for nc.

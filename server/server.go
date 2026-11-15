@@ -38,6 +38,10 @@ type Server struct {
 	totalCommands atomic.Uint64
 	protocolErrs  atomic.Uint64
 	deniedCmds    atomic.Uint64
+	readCalls     atomic.Uint64
+	readBytes     atomic.Uint64
+	setBatches    atomic.Uint64
+	setBatched    atomic.Uint64
 }
 
 // New returns a Server with the options o.

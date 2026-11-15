@@ -47,6 +47,10 @@ func (s *Server) Info(section string) string {
 		line("total_commands_processed", num(s.totalCommands.Load()))
 		line("protocol_errors", num(s.protocolErrs.Load()))
 		line("denied_commands", num(s.deniedCmds.Load()))
+		line("read_calls", num(s.readCalls.Load()))
+		line("read_bytes", num(s.readBytes.Load()))
+		line("set_batches", num(s.setBatches.Load()))
+		line("set_batched_commands", num(s.setBatched.Load()))
 		b.WriteString("\r\n")
 	}
 	if want("shale") {

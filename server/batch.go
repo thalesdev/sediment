@@ -56,6 +56,8 @@ func (c *conn) batchSets(first [][]byte) (carry [][]byte, readErr error, written
 	}
 	replies := command.SetMany(c.s.env, cmds)
 	c.s.totalCommands.Add(uint64(len(cmds)))
+	c.s.setBatches.Add(1)
+	c.s.setBatched.Add(uint64(len(cmds)))
 	c.w.SetProtocol(c.client.Proto)
 	for _, r := range replies {
 		if err := c.w.WriteValue(r); err != nil {
