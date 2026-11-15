@@ -195,3 +195,36 @@ func mset(env *Env, _ *Client, args [][]byte) resp.Value {
 	}
 	return replyOK
 }
+
+// SetMany runs plain SET commands, each as [SET key value], as one atomic write,
+// and returns the reply of each one in the same order. The server uses it for the
+// commands of a pipeline that already arrived, so that they share one record of
+// the log. A SET with a key that is too large gets its error and is left out of
+// the write. If the write fails, every command in it gets the same error.
+func SetMany(env *Env, cmds [][][]byte) []resp.Value {
+	replies := make([]resp.Value, len(cmds))
+	var batch shale.Batch
+	included := make([]int, 0, len(cmds))
+	for i, args := range cmds {
+		if bad, ok := env.checkKey(args[1]); !ok {
+			replies[i] = bad
+			continue
+		}
+		batch.Put(args[1], args[2])
+		included = append(included, i)
+	}
+	if batch.Len() == 0 {
+		return replies
+	}
+	stripes := env.Locks.LockKeys(len(included), func(n int) []byte { return cmds[included[n]][1] })
+	err := env.Store.Write(&batch)
+	env.Locks.UnlockStripes(stripes)
+	reply := replyOK
+	if err != nil {
+		reply = env.storageError("set", err)
+	}
+	for _, i := range included {
+		replies[i] = reply
+	}
+	return replies
+}

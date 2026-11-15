@@ -23,6 +23,7 @@ type Server struct {
 	opts Options
 	env  *command.Env
 	reg  *command.Registry
+	set  *command.Spec
 
 	mu        sync.Mutex
 	listeners map[net.Listener]struct{}
@@ -45,9 +46,11 @@ func New(o Options) (*Server, error) {
 		return nil, errors.New("server: a store is required")
 	}
 	o = o.withDefaults()
+	reg := command.NewRegistry()
 	s := &Server{
 		opts:      o,
-		reg:       command.NewRegistry(),
+		reg:       reg,
+		set:       reg.Lookup([]byte("set")),
 		listeners: make(map[net.Listener]struct{}),
 		conns:     make(map[*conn]struct{}),
 		started:   time.Now(),

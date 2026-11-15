@@ -41,7 +41,8 @@ sediment is a key-value database that speaks the Redis protocol (RESP), built on
 ### 8. Server performance
 - [ ] Profile the server without a pipeline: 0.5 ms per command with 50 clients is slow for loopback, and the cause is not known.
 - [ ] Block pool or block cache for `GET` (about 4.9 KiB per command), after the profile confirms it.
-- [ ] Run the consecutive `SET` commands of a pipeline as one batch, only if the profile shows the waits for the log.
+- [x] Run the consecutive `SET` commands of a pipeline as one write (`SetMany`), after the numbers showed one wait for the log per command.
+- [ ] A `MultiGet` in Shale (one read state and one sequence number for many keys), for pipelined `GET` and `MGET`, only if a profile of pipelined `GET` shows that cost.
 
 ## Backlog
 

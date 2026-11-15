@@ -465,3 +465,67 @@ func parseDouble(b []byte) (float64, bool) {
 	}
 	return f, true
 }
+
+// Pending reports whether the bytes that the Reader has already read hold one
+// whole command, so that ReadCommand returns without waiting for the network. It
+// does not consume anything. It returns false if the command is partial, if it is
+// an empty line or an empty array, which ReadCommand skips and then waits for the
+// next command, if it is malformed, or if it is larger than what the buffer holds, so a caller
+// that batches commands stops at those and lets ReadCommand deal with them.
+func (r *Reader) Pending() bool {
+	n := r.br.Buffered()
+	if n == 0 {
+		return false
+	}
+	buf, err := r.br.Peek(n)
+	if err != nil {
+		return false
+	}
+	if buf[0] != '*' {
+		i := bytes.IndexByte(buf, '\n')
+		if i < 0 || i > r.limits.MaxInline {
+			return false
+		}
+		return len(bytes.TrimFunc(buf[:i], func(c rune) bool { return c < 0x80 && isSpace(byte(c)) })) > 0
+	}
+	pos := 1
+	count, ok := scanNumber(buf, &pos)
+	if !ok || count <= 0 || count > r.limits.MaxArgs {
+		return false
+	}
+	total := 0
+	for range count {
+		if pos >= len(buf) || buf[pos] != '$' {
+			return false
+		}
+		pos++
+		size, ok := scanNumber(buf, &pos)
+		if !ok || size < 0 || size > r.limits.MaxBulk {
+			return false
+		}
+		total += size
+		if total > r.limits.MaxRequest || pos+size+2 > len(buf) {
+			return false
+		}
+		if buf[pos+size] != '\r' || buf[pos+size+1] != '\n' {
+			return false
+		}
+		pos += size + 2
+	}
+	return true
+}
+
+// scanNumber reads a number and its CR LF at buf[*pos:], and moves *pos after
+// them. It fails if the line is not whole or if it is not a number.
+func scanNumber(buf []byte, pos *int) (int, bool) {
+	i := bytes.Index(buf[*pos:], []byte("\r\n"))
+	if i < 0 || i > maxNumberLine {
+		return 0, false
+	}
+	n, ok := parseInt(buf[*pos : *pos+i])
+	if !ok || n < -1 || n > math.MaxInt32 {
+		return 0, false
+	}
+	*pos += i + 2
+	return int(n), true
+}

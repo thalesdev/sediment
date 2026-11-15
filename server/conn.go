@@ -93,29 +93,49 @@ func (c *conn) serve() {
 // loop reads and runs commands until the connection ends.
 func (c *conn) loop() {
 	o := &c.s.opts
+	var carry [][]byte
 	for {
-		if c.r.Buffered() == 0 {
-			idle := o.IdleTimeout
-			if !c.client.Authed && (idle <= 0 || o.PreAuthTimeout < idle) {
-				idle = o.PreAuthTimeout
+		var args [][]byte
+		if carry != nil {
+			args, carry = carry, nil
+		} else {
+			if c.r.Buffered() == 0 {
+				idle := o.IdleTimeout
+				if !c.client.Authed && (idle <= 0 || o.PreAuthTimeout < idle) {
+					idle = o.PreAuthTimeout
+				}
+				if idle > 0 {
+					_ = c.nc.SetReadDeadline(time.Now().Add(idle))
+				} else {
+					_ = c.nc.SetReadDeadline(time.Time{})
+				}
+				if c.s.closing.Load() {
+					return
+				}
+				if err := c.r.Wait(); err != nil {
+					return
+				}
+				_ = c.nc.SetReadDeadline(time.Now().Add(o.ReadTimeout))
 			}
-			if idle > 0 {
-				_ = c.nc.SetReadDeadline(time.Now().Add(idle))
-			} else {
-				_ = c.nc.SetReadDeadline(time.Time{})
-			}
-			if c.s.closing.Load() {
+			var err error
+			if args, err = c.r.ReadCommand(); err != nil {
+				c.readFailed(err)
 				return
 			}
-			if err := c.r.Wait(); err != nil {
-				return
-			}
-			_ = c.nc.SetReadDeadline(time.Now().Add(o.ReadTimeout))
 		}
-		args, err := c.r.ReadCommand()
-		if err != nil {
-			c.readFailed(err)
-			return
+		if isPlainSet(args) && c.canBatchSet() {
+			var readErr error
+			var written bool
+			carry, readErr, written = c.batchSets(args)
+			if !written {
+				return
+			}
+			if readErr != nil {
+				_ = c.w.Flush()
+				c.readFailed(readErr)
+				return
+			}
+			continue
 		}
 		wasAuthed := c.client.Authed
 		reply := c.execute(args)

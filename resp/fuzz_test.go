@@ -4,6 +4,7 @@ package resp
 
 import (
 	"bytes"
+	"io"
 	"runtime"
 	"testing"
 )
@@ -73,4 +74,46 @@ func encodeBytes(v Value) []byte {
 	_ = w.WriteValue(v)
 	_ = w.Flush()
 	return buf.Bytes()
+}
+
+type onceReader struct {
+	data  []byte
+	reads int
+}
+
+func (o *onceReader) Read(p []byte) (int, error) {
+	o.reads++
+	if o.reads > 1 || len(o.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, o.data)
+	o.data = o.data[n:]
+	return n, nil
+}
+
+func FuzzPending(f *testing.F) {
+	for _, s := range seeds {
+		f.Add([]byte(s))
+	}
+	limits := Limits{MaxBulk: 1 << 10, MaxArgs: 16, MaxInline: 256, MaxRequest: 4 << 10}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		src := &onceReader{data: data}
+		r := NewReader(src, limits)
+		if r.Wait() != nil {
+			return
+		}
+		if !r.Pending() {
+			return
+		}
+		args, err := r.ReadCommand()
+		if err != nil && !IsProtocolError(err) {
+			t.Fatalf("Pending said a whole command, ReadCommand gave %q, %v", args, err)
+		}
+		if err == nil && len(args) == 0 {
+			t.Fatal("ReadCommand returned no arguments and no error")
+		}
+		if src.reads > 1 {
+			t.Fatal("ReadCommand read from the source after Pending said it was whole")
+		}
+	})
 }

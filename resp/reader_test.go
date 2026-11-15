@@ -308,3 +308,66 @@ func TestParseInt(t *testing.T) {
 		}
 	})
 }
+
+func TestPending(t *testing.T) {
+	read := func(input string) *Reader {
+		r := NewReader(strings.NewReader(input), Limits{MaxBulk: 64, MaxArgs: 4, MaxInline: 32, MaxRequest: 100})
+		if err := r.Wait(); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	t.Run("Should see a whole command in the buffer", func(t *testing.T) {
+		for _, in := range []string{
+			"*1\r\n$4\r\nPING\r\n", "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$1\r\nv\r\n", "*2\r\n$3\r\nGET\r\n$0\r\n\r\n", "PING\r\n", "PING\n",
+		} {
+			if !read(in).Pending() {
+				t.Fatalf("%q is whole", in)
+			}
+		}
+	})
+
+	t.Run("Should not see a partial command", func(t *testing.T) {
+		for _, in := range []string{
+			"*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$1\r\n", "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$1\r\nv", "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$1\r\nv\r",
+			"*2", "*2\r\n", "*1\r\n$", "*1\r\n$4\r\nPI", "PING",
+		} {
+			if read(in).Pending() {
+				t.Fatalf("%q is partial", in)
+			}
+		}
+	})
+
+	t.Run("Should leave a bad or empty command to ReadCommand", func(t *testing.T) {
+		for _, in := range []string{
+			"\r\n", "\n", "  \t\r\n", "*0\r\n", "*-1\r\n", "*x\r\n", "*5\r\n", "*1\r\n:1\r\n", "*1\r\n$-1\r\n", "*1\r\n$65\r\n" + strings.Repeat("a", 65) + "\r\n",
+			"*1\r\n$3\r\nabcde\r\n", strings.Repeat("a", 40) + "\r\n", "*2\r\n$60\r\n" + strings.Repeat("a", 60) + "\r\n$60\r\n" + strings.Repeat("a", 60) + "\r\n",
+		} {
+			if read(in).Pending() {
+				t.Fatalf("%q must be left to ReadCommand", in)
+			}
+		}
+	})
+
+	t.Run("Should not consume the bytes", func(t *testing.T) {
+		r := read("*1\r\n$4\r\nPING\r\n*1\r\n$4\r\nECHO\r\n")
+		if !r.Pending() || !r.Pending() {
+			t.Fatal("not pending")
+		}
+		args, err := r.ReadCommand()
+		if err != nil || string(args[0]) != "PING" {
+			t.Fatalf("got %q, %v", args, err)
+		}
+		if !r.Pending() {
+			t.Fatal("the second command is whole")
+		}
+		args, _ = r.ReadCommand()
+		if string(args[0]) != "ECHO" {
+			t.Fatalf("got %q", args)
+		}
+		if r.Pending() {
+			t.Fatal("nothing is left")
+		}
+	})
+}
