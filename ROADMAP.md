@@ -50,6 +50,14 @@ Each change was made after a measurement, with the numbers in [BENCHMARKS.md](BE
 - [x] **p99 with one core**: with one processor the scheduler of Go looks for network events only when its queues are empty, and the flush and the compaction never let them empty. A pause of 20 us every 128 entries (only with one processor) took the p99 of a pipelined `SET` from 27 to 10 ms.
 - [x] **`INFO`** shows the waits of the writes for the flush and the compaction, the time of the flushes, the compactions and the freezes, the cache of blocks, the size of the batches of `SET`, and, from the runtime of Go, the scheduling latency and the pauses of the garbage collector.
 
+- [x] **Milestone 1: a complete single node.**
+  - **Range deletes** in Shale (`DB.DeleteRange`, `Batch.DeleteRange`): one record of the batch and of the log, a list in the memtable, and a meta block `shale.range_del` in the table, so the data blocks stay in the LevelDB format and goleveldb still reads them. A read compares the sequence number of the newest version of a key with the newest range delete that covers it. A compaction drops what a range delete covers, and drops the range delete when it reaches the oldest table. goleveldb refuses a batch that has a range delete, and ignores the meta block.
+  - **Key layout**, frozen for v1.0: every engine key has a class and a hash slot (`KEY`, `ELEMENT`, `OWNER`, `SYSTEM`), and a collection is named by an id that the store never uses twice. A value has a header with its type and an optional deadline. `sedimentd` refuses a data directory that has keys and no format record. The cost is about 50 ns of CPU for each command, and a prefix `MATCH` of `KEYS` and `SCAN` reads every key. A slot is one range for each class, so a slot can move with a range iterator.
+  - **Hashes** (`HSET`, `HMSET`, `HSETNX`, `HGET`, `HMGET`, `HDEL`, `HEXISTS`, `HLEN`, `HSTRLEN`, `HINCRBY`, `HINCRBYFLOAT`, `HGETALL`, `HKEYS`, `HVALS`, `HSCAN`) and **sets** (`SADD`, `SREM`, `SPOP`, `SISMEMBER`, `SMISMEMBER`, `SCARD`, `SMEMBERS`, `SRANDMEMBER`, `SSCAN`, `SUNION`, `SINTER`, `SDIFF` and the `STORE` versions). A write is one batch, an empty collection goes away, and `DEL`, a `SET` that reads the key, `RENAME` and an `EXPIRE` in the past remove the elements with one range delete. A plain `SET` and the expiry of a collection leave elements behind, and a sweeper (`sweep-interval`) removes them.
+  - **Transactions** (`MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`): `EXEC` locks the keys, checks the watched keys, and runs the commands in order. A reader that takes no lock can see a transaction half applied, and a crash can leave a part of it, until `EXEC` becomes one entry of the Raft log.
+  - **The rest of the string and key commands**: `SETEX`, `PSETEX`, `MSETNX`, `GETEX`, `GETRANGE`, `SETRANGE`, `INCRBYFLOAT`, `UNLINK`, `RENAME`, `RENAMENX`.
+  - **Online backup**: `DB.Checkpoint`, `BGSAVE` into `backup-dir`, `LASTSAVE`, and `INFO persistence`. The files are hard links, and the directory is published with a rename. To restore, copy the directory and start `sedimentd`.
+
 ## Decided against
 
 Measured or discussed, and not to be proposed again without a new reason.
@@ -66,15 +74,7 @@ Measured or discussed, and not to be proposed again without a new reason.
 
 ## Path to v1.0
 
-v1.0 is milestones 1 to 4. Each milestone ends with `make full` green and the docs updated. The order is the order of the work, except that milestones 1 and 2 can run together.
-
-### Milestone 1: a complete single node
-- [ ] **Key encoding.** One layout for the type, the hash slot and the user key, decided before the first new data type. The key layout is frozen at v1.0, so the slot prefix of cluster mode is part of it even though cluster mode comes later.
-- [ ] **Hashes**: `HSET`, `HGET`, `HDEL`, `HEXISTS`, `HLEN`, `HGETALL`, `HKEYS`, `HVALS`, `HMGET`, `HSETNX`, `HINCRBY`, `HSCAN`. A hash is a range of keys, read with an iterator.
-- [ ] **Sets**: `SADD`, `SREM`, `SISMEMBER`, `SMEMBERS`, `SCARD`, `SSCAN`, `SUNION`, `SINTER`, `SDIFF`.
-- [ ] **Transactions**: `MULTI`, `EXEC`, `DISCARD`, `WATCH`.
-- [ ] **The rest of the string and key commands**: `SETEX`, `PSETEX`, `MSETNX`, `GETEX`, `GETRANGE`, `SETRANGE`, `INCRBYFLOAT`, `UNLINK`, `RENAME`.
-- [ ] **Backup**: a consistent copy of a running database, built on snapshots, and the way to restore it.
+v1.0 is milestones 2 to 4. Milestone 1, a complete single node, is done and is listed under Done. Each milestone ends with `make full` green and the docs updated.
 
 ### Milestone 2: safe to run, and visible from the inside
 - [ ] **ACL phase 2**: key patterns (`~prefix:*`, `%R~`, `%W~`), `ACL SETUSER`, `DELUSER`, `SAVE`, `GETUSER`, `LOG`, selectors, rules for subcommands, user from the CN of a client certificate.
@@ -108,8 +108,8 @@ v1.0 is milestones 1 to 4. Each milestone ends with `make full` green and the do
 ## After v1.0
 
 In this order.
-1. **Cluster mode**, for data that does not fit in one group: 16384 hash slots with hash tags, `CLUSTER SLOTS` and `CLUSTER SHARDS`, `MOVED` and `ASK`, one Raft group for each range of slots. A slot is one range of keys because of the key layout of milestone 1, so a slot moves with a range iterator and without a full scan. A command with keys in two slots is a `CROSSSLOT` error.
-2. **More data types**: lists, sorted sets, `PUBLISH` and `SUBSCRIBE`, streams, each one on the key layout of milestone 1.
+1. **Cluster mode**, for data that does not fit in one group: 16384 hash slots with hash tags, `CLUSTER SLOTS` and `CLUSTER SHARDS`, `MOVED` and `ASK`, one Raft group for each range of slots. A slot is one range of keys for each class because of the key layout, so a slot moves with a range iterator and without a full scan. A command with keys in two slots is a `CROSSSLOT` error.
+2. **More data types**: lists, sorted sets, `PUBLISH` and `SUBSCRIBE`, streams, each one on the key layout of v1.0.
 3. **A formal model in TLA+** of Shale (WAL, flush, MANIFEST, compaction, reference counting, `Get` ordering) and of the replication, checked across every interleaving and crash point. It is the last item of the project.
 
 ## Engine experiments
@@ -120,7 +120,7 @@ None of these is promised for v1.0. Each one starts with a measurement, and is d
 - **Reads**: a `MultiGet` in Shale for pipelined `GET` and `MGET`, a cache of the index blocks and of the parsed blocks (a hit of the block cache still costs about 470 ns, most of it in the block iterator), and a better policy than "one miss in eight" for a cache that is full.
 - **Writes**: less CPU in the write path (the flush and the compaction are about 20% of the CPU of a `SET`, and the log about as much), and key-value separation for large values.
 - **Files and memory**: delete obsolete files outside the `Get` path, reuse the blocks of a memtable after its flush and measure the memory that a memtable really uses, and Snappy compression.
-- **Iteration**: reverse iteration and `SeekToLast`, and snapshots that live across commands (they need a registry of the oldest live snapshot, so that a compaction keeps the versions that one can see).
+- **Iteration**: reverse iteration and `SeekToLast`, and snapshots that live across commands (they need a registry of the oldest live snapshot, so that a compaction keeps the versions that one can see). A compaction that picks tables with a range delete and the data that it covers is rare with a size-tiered rule, so the space of a deleted collection is freed late.
 - **Protocol**: RESP3 attributes and streamed strings, a second native protocol next to RESP, RESP over QUIC compared with TCP.
 - **Tools**: a generator of load for the cases that `redis-benchmark` cannot do (a data set larger than the memory of Redis with `maxmemory`, keys of many sizes with common prefixes, large values, constant overwrites and deletes).
 - **The CPU per command**: explain the 1.3 to 1.6 us between the benchmark without the network and the real run (the guess is a cold CPU cache, not tested).
