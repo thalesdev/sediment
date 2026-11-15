@@ -63,8 +63,13 @@ func New(o Options) (*Server, error) {
 		conns:     make(map[*conn]struct{}),
 		started:   time.Now(),
 	}
+	versions := command.NewVersions()
 	s.env = &command.Env{
-		Store:           o.Store,
+		Store:           command.WithVersions(o.Store, versions),
+		Versions:        versions,
+		MaxTxCommands:   o.MaxTxCommands,
+		MaxTxBytes:      o.MaxTxBytes,
+		MaxWatch:        o.MaxWatch,
 		Locks:           command.NewLocks(),
 		Access:          o.Access,
 		Meta:            s,

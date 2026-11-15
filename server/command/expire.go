@@ -36,7 +36,7 @@ func expireCommands() []*Spec {
 // The unit is the number of milliseconds in one unit of the argument, and
 // absolute tells that the argument is a Unix time and not a time to wait.
 func expireHandler(name string, unit int64, absolute bool) Handler {
-	return func(env *Env, _ *Client, args [][]byte) resp.Value {
+	return func(env *Env, cl *Client, args [][]byte) resp.Value {
 		key := args[1]
 		n, ok := parseInt(args[2])
 		if !ok {
@@ -84,8 +84,8 @@ func expireHandler(name string, unit int64, absolute bool) Handler {
 			past = true
 		}
 
-		stripe := env.Locks.Lock(key)
-		defer env.Locks.Unlock(stripe)
+		stripe := cl.lock(env, key)
+		defer cl.unlock(env, stripe)
 		rec, err := env.loadRecord(key)
 		if isNotFound(err) {
 			return resp.Integer(0)
@@ -152,13 +152,13 @@ func ttlHandler(name string, unit int64, absolute bool) Handler {
 }
 
 // persist is PERSIST key. It replies 1 if it removed a deadline.
-func persist(env *Env, _ *Client, args [][]byte) resp.Value {
+func persist(env *Env, cl *Client, args [][]byte) resp.Value {
 	key := args[1]
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	rec, err := env.loadRecord(key)
 	if isNotFound(err) || (err == nil && rec.deadline == 0) {
 		return resp.Integer(0)

@@ -23,7 +23,7 @@ func isPlainSet(args [][]byte) bool {
 // execute would not refuse it. If it may not, the command takes the normal path
 // and gets its error.
 func (c *conn) canBatchSet() bool {
-	if !c.client.Authed || c.s.set == nil {
+	if !c.client.Authed || c.s.set == nil || c.client.InMulti() {
 		return false
 	}
 	a := c.s.opts.Access

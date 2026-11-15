@@ -37,6 +37,9 @@ type Spec struct {
 	// in the COMMAND reply. A command without keys has 0 in each.
 	FirstKey, LastKey, KeyStep int
 
+	// Tx says how the command behaves between MULTI and EXEC.
+	Tx TxMode
+
 	// Handler runs the command.
 	Handler Handler
 }
@@ -145,6 +148,16 @@ type Env struct {
 
 	nextID atomic.Uint64
 
+	// Versions counts the writes of each key for WATCH. The server wraps Store
+	// with it. It can be nil, and then WATCH never sees a change.
+	Versions *Versions
+
+	// MaxTxCommands is the largest number of commands that a transaction can
+	// queue, and MaxTxBytes the largest total size of their arguments. MaxWatch is
+	// the largest number of keys that a client can watch. A value that is not
+	// positive is no limit.
+	MaxTxCommands, MaxTxBytes, MaxWatch int
+
 	uidMu    sync.Mutex
 	uidNext  uint64
 	uidLimit uint64
@@ -189,6 +202,7 @@ type Client struct {
 	Created time.Time
 
 	scan scanState
+	tx   txState
 }
 
 // Registry is a set of commands.
@@ -232,7 +246,7 @@ func (r *Registry) Specs() []*Spec {
 // NewRegistry returns a registry with all the commands of the server.
 func NewRegistry() *Registry {
 	r := &Registry{specs: make(map[string]*Spec)}
-	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), connectionCommands(), metaCommands()} {
+	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), txCommands(), connectionCommands(), metaCommands()} {
 		for _, s := range list {
 			r.specs[s.Name] = s
 		}

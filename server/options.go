@@ -48,6 +48,18 @@ type Options struct {
 	// is 1 minute. A negative value turns the sweeper off.
 	SweepInterval time.Duration
 
+	// MaxTxCommands is the largest number of commands that a client can queue
+	// between MULTI and EXEC. The default is 10000.
+	MaxTxCommands int
+
+	// MaxTxBytes is the largest total size of the arguments of the commands that a
+	// client queues between MULTI and EXEC. The default is 32 MiB.
+	MaxTxBytes int
+
+	// MaxWatch is the largest number of keys that a client can watch. The default
+	// is 10000.
+	MaxWatch int
+
 	// IdleTimeout closes a connection that sends nothing for this long. The
 	// default is 10 minutes. A negative value turns it off.
 	IdleTimeout time.Duration
@@ -104,6 +116,9 @@ const (
 	defaultAuthDelayMax     = 2 * time.Second
 	defaultMaxAuthFailures  = 5
 	defaultSweepInterval    = time.Minute
+	defaultMaxTxCommands    = 10000
+	defaultMaxTxBytes       = 32 << 20
+	defaultMaxWatch         = 10000
 )
 
 // preAuthLimits are the default limits of a client that has not signed in. They
@@ -132,6 +147,15 @@ func (o Options) withDefaults() Options {
 	}
 	if o.MaxReply <= 0 {
 		o.MaxReply = defaultMaxReply
+	}
+	if o.MaxTxCommands <= 0 {
+		o.MaxTxCommands = defaultMaxTxCommands
+	}
+	if o.MaxTxBytes <= 0 {
+		o.MaxTxBytes = defaultMaxTxBytes
+	}
+	if o.MaxWatch <= 0 {
+		o.MaxWatch = defaultMaxWatch
 	}
 	if o.SweepInterval == 0 {
 		o.SweepInterval = defaultSweepInterval

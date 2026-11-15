@@ -45,6 +45,15 @@ func (b *Batch) DeleteRange(start, end []byte) {
 	b.ops = append(b.ops, batchOp{kind: batch.KindRangeDelete, key: start, value: end})
 }
 
+// Each calls fn for each operation of the batch, in order. For a range delete, key
+// is the start and value is the end of the range. The slices are the ones that the
+// caller gave to the batch.
+func (b *Batch) Each(fn func(kind batch.Kind, key, value []byte)) {
+	for _, op := range b.ops {
+		fn(op.kind, op.key, op.value)
+	}
+}
+
 // Len returns the number of operations in the batch.
 func (b *Batch) Len() int {
 	return len(b.ops)

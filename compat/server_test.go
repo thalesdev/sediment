@@ -304,6 +304,61 @@ func TestGoRedisClient(t *testing.T) {
 		})
 	}
 
+	for _, proto := range []int{2, 3} {
+		t.Run(fmt.Sprintf("Should run transactions with go-redis on RESP%d", proto), func(t *testing.T) {
+			ctx := context.Background()
+			rdb := redis.NewClient(&redis.Options{Addr: addr, Protocol: proto})
+			defer rdb.Close()
+			key := fmt.Sprintf("txkey%d", proto)
+			cmds, err := rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+				p.Set(ctx, key, "10", 0)
+				p.Incr(ctx, key)
+				p.Get(ctx, key)
+				return nil
+			})
+			if err != nil || len(cmds) != 3 {
+				t.Fatalf("TxPipelined: %v, %d commands", err, len(cmds))
+			}
+			if got := cmds[2].(*redis.StringCmd).Val(); got != "11" {
+				t.Fatalf("GET inside the transaction: %q", got)
+			}
+			err = rdb.Watch(ctx, func(tx *redis.Tx) error {
+				n, err := tx.Get(ctx, key).Int()
+				if err != nil {
+					return err
+				}
+				if err := rdb.Set(ctx, key, "99", 0).Err(); err != nil {
+					return err
+				}
+				_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+					p.Set(ctx, key, n+1, 0)
+					return nil
+				})
+				return err
+			}, key)
+			if !errors.Is(err, redis.TxFailedErr) {
+				t.Fatalf("a conflicting write should fail the transaction, got %v", err)
+			}
+			err = rdb.Watch(ctx, func(tx *redis.Tx) error {
+				n, err := tx.Get(ctx, key).Int()
+				if err != nil {
+					return err
+				}
+				_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+					p.Set(ctx, key, n+1, 0)
+					return nil
+				})
+				return err
+			}, key)
+			if err != nil {
+				t.Fatalf("Watch without a conflict: %v", err)
+			}
+			if got, err := rdb.Get(ctx, key).Result(); err != nil || got != "100" {
+				t.Fatalf("GET after the transactions: %q, %v", got, err)
+			}
+		})
+	}
+
 	t.Run("Should pipeline many commands with go-redis", func(t *testing.T) {
 		ctx := context.Background()
 		rdb := redis.NewClient(&redis.Options{Addr: addr})

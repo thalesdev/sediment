@@ -35,6 +35,7 @@ func TestWriter(t *testing.T) {
 			{BulkString("hi"), "$2\r\nhi\r\n"},
 			{BulkString(""), "$0\r\n\r\n"},
 			{Null(), "$-1\r\n"},
+			{NullArray(), "*-1\r\n"},
 			{Array(Integer(1), Null()), "*2\r\n:1\r\n$-1\r\n"},
 			{Array(), "*0\r\n"},
 		}
@@ -51,6 +52,7 @@ func TestWriter(t *testing.T) {
 			want string
 		}{
 			{Null(), "_\r\n"},
+			{NullArray(), "_\r\n"},
 			{Value{Kind: KindBool, Bool: true}, "#t\r\n"},
 			{Value{Kind: KindBool}, "#f\r\n"},
 			{Value{Kind: KindDouble, Double: 1.5}, ",1.5\r\n"},

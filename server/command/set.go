@@ -62,7 +62,7 @@ func setReply(members [][]byte) resp.Value {
 }
 
 // sadd is SADD key member [member ...].
-func sadd(env *Env, _ *Client, args [][]byte) resp.Value {
+func sadd(env *Env, cl *Client, args [][]byte) resp.Value {
 	key, members := args[1], args[2:]
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
@@ -70,8 +70,8 @@ func sadd(env *Env, _ *Client, args [][]byte) resp.Value {
 	if bad, ok := env.checkFields(members); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	c, err := env.openColl(key, typeSet)
 	if err != nil {
 		return env.storageError("sadd", err)
@@ -136,13 +136,13 @@ func removeMembers(env *Env, name string, c *coll, members [][]byte) (int64, res
 }
 
 // srem is SREM key member [member ...].
-func srem(env *Env, _ *Client, args [][]byte) resp.Value {
+func srem(env *Env, cl *Client, args [][]byte) resp.Value {
 	key := args[1]
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	c, err := env.openColl(key, typeSet)
 	if err != nil {
 		return env.storageError("srem", err)
@@ -289,7 +289,7 @@ func (c *coll) sample(snap *shale.Snapshot, n int) ([][]byte, error) {
 }
 
 // spop is SPOP key [count].
-func spop(env *Env, _ *Client, args [][]byte) resp.Value {
+func spop(env *Env, cl *Client, args [][]byte) resp.Value {
 	key := args[1]
 	n, given, bad, ok := parseCount(args[2:])
 	if !ok {
@@ -301,8 +301,8 @@ func spop(env *Env, _ *Client, args [][]byte) resp.Value {
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	snap, c, err := env.readColl(key, typeSet)
 	if err != nil {
 		return env.storageError("spop", err)
@@ -413,7 +413,7 @@ const (
 // setOp returns the handler of SUNION, SINTER and SDIFF, and of the versions that
 // store the result. All the sets are read as of one snapshot.
 func setOp(kind setOpKind, store bool) Handler {
-	return func(env *Env, _ *Client, args [][]byte) resp.Value {
+	return func(env *Env, cl *Client, args [][]byte) resp.Value {
 		name := string(bytes.ToLower(args[0]))
 		var dest []byte
 		keys := args[1:]
@@ -429,8 +429,8 @@ func setOp(kind setOpKind, store bool) Handler {
 			}
 		}
 		if store {
-			stripe := env.Locks.Lock(dest)
-			defer env.Locks.Unlock(stripe)
+			stripe := cl.lock(env, dest)
+			defer cl.unlock(env, stripe)
 		}
 		snap, err := env.Store.Snapshot()
 		if err != nil {

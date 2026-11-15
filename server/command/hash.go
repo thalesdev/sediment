@@ -58,7 +58,7 @@ func (e *Env) checkFields(fields [][]byte) (resp.Value, bool) {
 
 // hsetFields writes pairs of field and value into the hash at key and returns the
 // number of fields that did not exist.
-func hsetFields(env *Env, name string, key []byte, pairs [][]byte) (int64, resp.Value, bool) {
+func hsetFields(env *Env, cl *Client, name string, key []byte, pairs [][]byte) (int64, resp.Value, bool) {
 	fields := make([][]byte, 0, len(pairs)/2)
 	for i := 0; i < len(pairs); i += 2 {
 		fields = append(fields, pairs[i])
@@ -69,8 +69,8 @@ func hsetFields(env *Env, name string, key []byte, pairs [][]byte) (int64, resp.
 	if bad, ok := env.checkFields(fields); !ok {
 		return 0, bad, false
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	c, err := env.openColl(key, typeHash)
 	if err != nil {
 		return 0, env.storageError(name, err), false
@@ -100,11 +100,11 @@ func hsetFields(env *Env, name string, key []byte, pairs [][]byte) (int64, resp.
 }
 
 // hset is HSET key field value [field value ...].
-func hset(env *Env, _ *Client, args [][]byte) resp.Value {
+func hset(env *Env, cl *Client, args [][]byte) resp.Value {
 	if len(args)%2 != 0 {
 		return WrongArgs("hset")
 	}
-	added, bad, ok := hsetFields(env, "hset", args[1], args[2:])
+	added, bad, ok := hsetFields(env, cl, "hset", args[1], args[2:])
 	if !ok {
 		return bad
 	}
@@ -112,18 +112,18 @@ func hset(env *Env, _ *Client, args [][]byte) resp.Value {
 }
 
 // hmset is HMSET key field value [field value ...].
-func hmset(env *Env, _ *Client, args [][]byte) resp.Value {
+func hmset(env *Env, cl *Client, args [][]byte) resp.Value {
 	if len(args)%2 != 0 {
 		return WrongArgs("hmset")
 	}
-	if _, bad, ok := hsetFields(env, "hmset", args[1], args[2:]); !ok {
+	if _, bad, ok := hsetFields(env, cl, "hmset", args[1], args[2:]); !ok {
 		return bad
 	}
 	return replyOK
 }
 
 // hsetnx is HSETNX key field value.
-func hsetnx(env *Env, _ *Client, args [][]byte) resp.Value {
+func hsetnx(env *Env, cl *Client, args [][]byte) resp.Value {
 	key, field, value := args[1], args[2], args[3]
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
@@ -131,8 +131,8 @@ func hsetnx(env *Env, _ *Client, args [][]byte) resp.Value {
 	if bad, ok := env.checkKey(field); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	c, err := env.openColl(key, typeHash)
 	if err != nil {
 		return env.storageError("hsetnx", err)
@@ -154,13 +154,13 @@ func hsetnx(env *Env, _ *Client, args [][]byte) resp.Value {
 }
 
 // hdel is HDEL key field [field ...].
-func hdel(env *Env, _ *Client, args [][]byte) resp.Value {
+func hdel(env *Env, cl *Client, args [][]byte) resp.Value {
 	key, fields := args[1], args[2:]
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	c, err := env.openColl(key, typeHash)
 	if err != nil {
 		return env.storageError("hdel", err)
@@ -198,12 +198,12 @@ func hdel(env *Env, _ *Client, args [][]byte) resp.Value {
 }
 
 // hincrby is HINCRBY key field increment.
-func hincrby(env *Env, _ *Client, args [][]byte) resp.Value {
+func hincrby(env *Env, cl *Client, args [][]byte) resp.Value {
 	delta, ok := parseInt(args[3])
 	if !ok {
 		return replyNotInt
 	}
-	return hmodify(env, "hincrby", args[1], args[2], func(old []byte, exists bool) ([]byte, resp.Value, bool) {
+	return hmodify(env, cl, "hincrby", args[1], args[2], func(old []byte, exists bool) ([]byte, resp.Value, bool) {
 		var cur int64
 		if exists {
 			n, ok := parseInt(old)
@@ -220,12 +220,12 @@ func hincrby(env *Env, _ *Client, args [][]byte) resp.Value {
 }
 
 // hincrbyfloat is HINCRBYFLOAT key field increment.
-func hincrbyfloat(env *Env, _ *Client, args [][]byte) resp.Value {
+func hincrbyfloat(env *Env, cl *Client, args [][]byte) resp.Value {
 	delta, err := strconv.ParseFloat(string(args[3]), 64)
 	if err != nil || math.IsNaN(delta) || math.IsInf(delta, 0) {
 		return replyFloatInvalid
 	}
-	return hmodify(env, "hincrbyfloat", args[1], args[2], func(old []byte, exists bool) ([]byte, resp.Value, bool) {
+	return hmodify(env, cl, "hincrbyfloat", args[1], args[2], func(old []byte, exists bool) ([]byte, resp.Value, bool) {
 		var cur float64
 		if exists {
 			f, err := strconv.ParseFloat(string(old), 64)
@@ -245,15 +245,15 @@ func hincrbyfloat(env *Env, _ *Client, args [][]byte) resp.Value {
 // hmodify reads a field, gives its payload to change, and writes what it returns.
 // It replies with the new payload as a bulk string for a float and as an integer
 // for HINCRBY.
-func hmodify(env *Env, name string, key, field []byte, change func(old []byte, exists bool) ([]byte, resp.Value, bool)) resp.Value {
+func hmodify(env *Env, cl *Client, name string, key, field []byte, change func(old []byte, exists bool) ([]byte, resp.Value, bool)) resp.Value {
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
 	if bad, ok := env.checkKey(field); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	c, err := env.openColl(key, typeHash)
 	if err != nil {
 		return env.storageError(name, err)
