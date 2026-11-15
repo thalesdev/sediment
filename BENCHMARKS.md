@@ -595,3 +595,28 @@ alternate the build without and with the change for the one that was kept:
 - Not tested: a real machine with one CPU on Linux (a container with a limit of one CPU makes Go use one processor), and
   with a pipeline of 64 or with `GET`.
 
+#### The p95 with one core: what was tried
+
+The pause of 20 us every 128 entries took the p99 from 27 to 10 ms and raised the p95 from about 5 to
+about 8 ms. Variants of the pause, one core, `SET`, 50 clients, 2 to 3 runs each, in ms. A "time" slice
+pauses after that much continuous work (checked every 16 entries), and "adaptive" does not pause when the
+memtable is 75% full or the tables are 75% of the limit that stops the writes:
+
+| | `-P 1` p95 / p99 | `-P 16` p95 / p99 / max | `-P 64` p95 / p99 |
+|---|---:|---:|---:|
+| no pause | 1.9 / 2.0 to 2.5 | 4.4 / 26 / 58 to 68 | 27 / 31 to 34 |
+| **kept**: count 128, 20 us | 1.9 to 2.0 / 3.0 to 3.2 | 7.7 / 9.7 to 9.9 / 25 to 36 | **21 to 22 / 29** |
+| adaptive, time 40 us, 20 us | 1.95 to 2.02 / 3.0 to 3.2 | **6.5 to 6.7 / 7.8 to 8.0 / 18 to 19** | 25 / 31 |
+| adaptive, time 25 us, 20 us | | 5.9 to 6.0 / 7.2 to 8.1 / 41 to 43 | 26 / 31 |
+| count 32, 50 us (fixed) | | 5.0 to 5.4 / 6.3 to 6.8 / **243 to 276** | not run |
+
+- The pause that is best for a pipeline of 16 (time slices of 40 us, adaptive) is 15% better in p95 and 19% better
+  in p99 there, the same without a pipeline, and 15% worse in p95 with a pipeline of 64, where the queue of 50
+  connections with 64 commands each decides the latency (a p50 of 8 ms without any flush). No setting wins in the three.
+- The settings with the smallest p95 let the flush fall behind: the count 32 and 50 us setting stalled the writes
+  (one stall, and maxima of 243 to 276 ms), and fixed time slices of 25 us with 20 or 30 us had 5 and 13 stalls with a
+  pipeline of 64. The adaptive rule (no pause when the memtable is 75% full) removed the stalls in every run.
+- The count 128 and 20 us setting was kept: it has no stalls in any run, it is the simplest, and it is the best with
+  a pipeline of 64. The adaptive version with time slices is a candidate if one core with a pipeline of about 16 is the
+  case that matters.
+
