@@ -119,12 +119,15 @@ the reads of the other tables rare.
 
 ## Server (`sedimentd`)
 
-`go test ./server -bench Benchmark -benchtime=2s -benchmem`. The client and the
-server run in the same process, with 11 client connections, on loopback, over a
-database of 100,000 keys of 16 bytes with values of 100 bytes. The time is the
-wall time per command across all the connections, and the client uses part of the
-CPU. These numbers are a first measure and not a comparison. `redis-benchmark` was
-not available when they were taken.
+`make bench-server`. The client and the server run in the same process, with 11
+client connections, on loopback, over a database of 100,000 keys of 16 bytes with
+values of 100 bytes. The server runs with `Sync` off, so a `SET` does not wait for
+`fsync`, and with `Sync` on the `SET` numbers would be much worse. The time is the
+wall time per command across all the connections. The client and the server
+compete for the same CPU, so each number measures both, and the real cost of the
+server alone is lower. These numbers are a first measure, not a comparison.
+`redis-benchmark`, which runs in its own process, was not available when they were
+taken, and it is the measure that counts.
 
 | Workload | ns/op | Commands per second | Allocations per command |
 |---|---:|---:|---:|
@@ -135,6 +138,19 @@ not available when they were taken.
 
 The pipeline is 7 times faster for `GET`, because a round trip on loopback costs more
 than the work of one command. A `GET` allocates about 4.9 KiB. This is
-close to the 5373 bytes of a Shale `ReadRandom`, so it is probably the data block
+close to the 5373 bytes of a Shale `ReadRandom`, which measures the engine alone
+with no server, so the comparison holds: the server adds little, and the cost is
+probably the data block
 that a table read allocates, which a block cache would remove. This was not
 profiled, and nothing was optimized yet.
+
+The pipeline helps `SET` much less than `GET` (209,000 against 540,000 per second).
+A likely cause is that the commands of one connection run one at a time, and each
+waits for its own write to the log, while the group commit only joins writes of
+different connections. This was not measured. If it is the cause, the server could
+run the consecutive `SET` commands that already arrived on a connection as one
+batch and reply in the same order.
+
+Next steps, in this order, each with its before and after numbers: run
+`redis-benchmark` (`-t get,set -n 1000000 -r 100000 -d 100 -q`, with and without
+`-P 16`), profile the server, and only then the block pool and the pipeline batch.
