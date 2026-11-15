@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/thalesdev/sediment/internal/ikey"
 	"github.com/thalesdev/sediment/internal/manifest"
@@ -33,14 +34,17 @@ func (db *DB) makeRoom() error {
 			return nil
 		}
 		if state.imm != nil {
-			db.cond.Wait()
+			db.stallFlush.wait(db.cond)
 			continue
 		}
 		if !db.opts.disableCompaction && len(state.tables) >= stallTables {
-			db.cond.Wait()
+			db.stallCompaction.wait(db.cond)
 			continue
 		}
-		if err := db.freeze(state); err != nil {
+		began := time.Now()
+		err := db.freeze(state)
+		db.freezes.add(time.Since(began))
+		if err != nil {
 			return db.fail("memtable switch", err)
 		}
 	}
@@ -104,7 +108,10 @@ func (db *DB) flushLoop() {
 		}
 		frozen, activeLog := state.imm, state.mem.wal
 		db.mu.Unlock()
+		began := time.Now()
 		tbl, err := db.flush(frozen, activeLog)
+		db.flushes.Add(1)
+		db.flushNanos.Add(int64(time.Since(began)))
 		db.mu.Lock()
 		if err != nil {
 			db.fail("flush", err)
@@ -185,7 +192,9 @@ func (db *DB) writeTable(list *skiplist.List, number uint64) (manifest.TableMeta
 	defer it.Close()
 	var smallest, largest []byte
 	smallestSeq, largestSeq := uint64(ikey.MaxSeq), uint64(0)
+	y := newYielder()
 	for it.SeekToFirst(); it.Valid(); it.Next() {
+		y.tick()
 		_, seq, _, err := ikey.Parse(it.Key())
 		if err != nil {
 			return fail(err)

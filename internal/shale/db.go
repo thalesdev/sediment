@@ -40,6 +40,13 @@ type DB struct {
 	lock  *os.File
 	cache *sstable.BlockCache
 
+	stallFlush      stallStat
+	stallCompaction stallStat
+	freezes         durStat
+	flushes         atomic.Uint64
+	flushNanos      atomic.Int64
+	compactNanos    atomic.Int64
+
 	mu        sync.Mutex
 	cond      *sync.Cond
 	writeCond *sync.Cond

@@ -142,7 +142,7 @@ func TestMeta(t *testing.T) {
 	t.Run("Should report INFO sections", func(t *testing.T) {
 		c.do("SET", "info-key", "v")
 		all := string(c.do("INFO").Bytes)
-		for _, want := range []string{"# Server", "# Clients", "# Stats", "# Shale", "total_commands_processed:", "connected_clients:"} {
+		for _, want := range []string{"# Server", "# Clients", "# Stats", "# Shale", "# Runtime", "total_commands_processed:", "connected_clients:", "gomaxprocs:", "sched_latency_p99_ms:", "write_stalls_flush:", "flush_ms:", "compaction_ms:"} {
 			if !strings.Contains(all, want) {
 				t.Fatalf("INFO has no %q:\n%s", want, all)
 			}

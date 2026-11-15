@@ -62,7 +62,7 @@ closes the connection, so that a web page cannot talk to the server.
 | `CLIENT` | [x] | `ID`, `SETNAME`, `GETNAME`, `SETINFO`, `INFO`. |
 | `CLIENT LIST`, `KILL`, `PAUSE`, `TRACKING` | [ ] | |
 | `COMMAND` | [x] | `COUNT`, `LIST`, `INFO`, `DOCS` (empty). |
-| `INFO` | [x] | Sections `server`, `clients`, `stats`, `shale`. |
+| `INFO` | [x] | Sections `server`, `clients`, `stats`, `shale`, `runtime`. |
 | `CONFIG GET` | [x] | Read only, no file names. |
 | `CONFIG SET`, `REWRITE` | [ ] | On purpose. See [SECURITY.md](../SECURITY.md). |
 | `ACL WHOAMI`, `USERS`, `LIST`, `LOAD`, `CAT` | [x] | Only for users with `@admin`. |

@@ -3,8 +3,10 @@
 package server
 
 import (
+	"math"
 	"path"
 	"runtime"
+	"runtime/metrics"
 	"slices"
 	"strconv"
 	"strings"
@@ -62,12 +64,90 @@ func (s *Server) Info(section string) string {
 		line("compaction_bytes_read", num(m.CompactionBytesRead))
 		line("compaction_bytes_written", num(m.CompactionBytesWritten))
 		line("flush_bytes", num(m.FlushBytes))
+		line("write_stalls_flush", num(m.StallFlushCount))
+		line("write_stalls_flush_ms", strconv.FormatInt(m.StallFlushNanos/1e6, 10))
+		line("write_stalls_compaction", num(m.StallCompactionCount))
+		line("write_stalls_compaction_ms", strconv.FormatInt(m.StallCompactionNanos/1e6, 10))
+		line("freezes", num(m.FreezeCount))
+		line("freeze_ms", strconv.FormatInt(m.FreezeNanos/1e6, 10))
+		line("freeze_max_ms", strconv.FormatInt(m.FreezeMaxNanos/1e6, 10))
+		line("flushes", num(m.Flushes))
+		line("flush_ms", strconv.FormatInt(m.FlushNanos/1e6, 10))
+		line("compaction_ms", strconv.FormatInt(m.CompactionNanos/1e6, 10))
 		line("block_cache_hits", num(m.BlockCacheHits))
 		line("block_cache_misses", num(m.BlockCacheMisses))
 		line("block_cache_bytes", strconv.Itoa(m.BlockCacheBytes))
 		b.WriteString("\r\n")
 	}
+	if want("runtime") {
+		b.WriteString("# Runtime\r\n")
+		for _, kv := range runtimeInfo() {
+			line(kv[0], kv[1])
+		}
+		b.WriteString("\r\n")
+	}
 	return b.String()
+}
+
+// histogramQuantile returns the upper bound of the bucket that holds the quantile q of
+// the histogram, or 0 if it has no value. The unit is the one of the histogram.
+func histogramQuantile(h *metrics.Float64Histogram, q float64) float64 {
+	var total uint64
+	for _, c := range h.Counts {
+		total += c
+	}
+	if total == 0 {
+		return 0
+	}
+	target := uint64(math.Ceil(q * float64(total)))
+	var seen uint64
+	for i, c := range h.Counts {
+		seen += c
+		if seen >= target && c > 0 {
+			if hi := h.Buckets[i+1]; !math.IsInf(hi, 1) {
+				return hi
+			}
+			return h.Buckets[i]
+		}
+	}
+	return 0
+}
+
+// runtimeInfo returns what the Go runtime knows about the delays that a request can
+// have: how long a goroutine waited to run, and how long the garbage collector
+// stopped the program. The times are since the start of the process.
+func runtimeInfo() [][2]string {
+	samples := []metrics.Sample{
+		{Name: "/sched/latencies:seconds"},
+		{Name: "/sched/pauses/total/gc:seconds"},
+		{Name: "/gc/cycles/total:gc-cycles"},
+		{Name: "/sched/goroutines:goroutines"},
+	}
+	metrics.Read(samples)
+	out := [][2]string{{"gomaxprocs", strconv.Itoa(runtime.GOMAXPROCS(0))}}
+	if v := samples[3].Value; v.Kind() == metrics.KindUint64 {
+		out = append(out, [2]string{"goroutines", strconv.FormatUint(v.Uint64(), 10)})
+	}
+	if v := samples[2].Value; v.Kind() == metrics.KindUint64 {
+		out = append(out, [2]string{"gc_cycles", strconv.FormatUint(v.Uint64(), 10)})
+	}
+	ms := func(sec float64) string { return strconv.FormatFloat(sec*1e3, 'f', 3, 64) }
+	for _, h := range []struct {
+		prefix string
+		sample metrics.Sample
+	}{{"sched_latency", samples[0]}, {"gc_pause", samples[1]}} {
+		if h.sample.Value.Kind() != metrics.KindFloat64Histogram {
+			continue
+		}
+		hist := h.sample.Value.Float64Histogram()
+		out = append(out,
+			[2]string{h.prefix + "_p50_ms", ms(histogramQuantile(hist, 0.50))},
+			[2]string{h.prefix + "_p99_ms", ms(histogramQuantile(hist, 0.99))},
+			[2]string{h.prefix + "_p999_ms", ms(histogramQuantile(hist, 0.999))},
+			[2]string{h.prefix + "_max_ms", ms(histogramQuantile(hist, 1))},
+		)
+	}
+	return out
 }
 
 // Config returns the name and value of each setting whose name matches the glob

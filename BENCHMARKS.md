@@ -540,3 +540,58 @@ Total rate with all the cores, against Redis with one thread and with `--io-thre
 - `GET` with `-P 64` uses 8.7 cores and 8 us per command, almost all of it reads of cold blocks (3,000,000 keys,
   cache of 64 MiB). It is the weakest case.
 
+### The p99 of a write with one core
+
+With `GOMAXPROCS=1` the p99 of a pipelined `SET` (`-P 16`, 50 clients) was 26 to 28 ms and the maximum
+66 to 82 ms, against 2.3 ms with all the cores. `INFO` now shows what was needed to find the cause:
+the waits of the writes for a flush and for a compaction, the time that the flushes and the
+compactions run, the time that a freeze of the memtable holds the lock, and, from the runtime of Go,
+the wait of a goroutine to run (`sched_latency_*`) and the pauses of the garbage collector (`gc_pause_*`).
+
+What each measure ruled in or out:
+
+| Guess | Measure | Result |
+|---|---|---|
+| The writes wait for the flush or the compaction | `write_stalls_flush` and `write_stalls_compaction` | 0 and 0, ruled out |
+| The garbage collector | `gc_pause_max_ms` | 0.08 ms, ruled out (and `GOGC=off` took the p99 from 7.6 to 7.0 ms) |
+| The freeze of the memtable holds the lock | `freeze_max_ms` | 9 ms in 8 freezes, and the same with all the cores, ruled out |
+| A goroutine waits for the processor | `sched_latency_p99_ms` | 14.7 ms with one core against 0.23 ms with 11: a part of it |
+| The requests wait for the network | with `runtime.Gosched` in the jobs, the wait for the processor fell to 2.6 ms and the p99 stayed at 24.7 ms | the cause |
+
+The cause is in the scheduler of Go, and it only exists with one processor. It looks for network events
+only when its queues of goroutines are empty, or every 10 ms from another thread. The flush and the compaction
+are code that never waits, and a job that calls `runtime.Gosched` goes back to the queue and keeps it from being
+empty, so a connection whose bytes already came waits until the thread of the scheduler looks. The wait is not in
+`sched_latency`, because the goroutine was not ready yet. With two processors one of them is idle and looks by itself
+(`sed-2` had a p99 of 4.1 ms in the earlier measure without any change).
+
+The fix is a pause of 20 microseconds every 128 entries in the flush and in the compaction, only when the program has
+one processor (`yielder` in `internal/shale/yield.go`). A sleep takes the job out of the queue and the processor looks for
+the network events. 1 core, `SET -P 16`, 3,000,000 commands, one run each of the other settings, and 4 rounds that
+alternate the build without and with the change for the one that was kept:
+
+| Pause | p99 | p95 | flush, all of them | compaction, all of them | rate |
+|---|---:|---:|---:|---:|---:|
+| none | 28.0 ms | 6.5 | 2.5 s | 2.0 s | 213,000 |
+| `Gosched` every 64 | 24.7 ms | 8.2 | 2.4 s | 1.9 s | 239,000 |
+| 20 us every 64 | 10.8 ms | 7.0 | 5.7 s | 4.6 s | 216,000 |
+| **20 us every 128** | **9.95 ms** | 8.2 | 3.6 s | 3.1 s | 235,000 |
+| 20 us every 256 | 15.2 ms | 10.6 | 2.9 s | 2.5 s | 219,000 |
+| 50 us every 64 | 8.3 ms | 6.6 | 7.8 s | 6.5 s | 222,000 |
+| 100 us every 64 | 9.0 ms | 6.1 | 11.0 s | 3.9 s | 222,000 |
+
+| 4 rounds, one core | p99 | maximum | p95 | rate |
+|---|---:|---:|---:|---:|
+| without the change | 25.8 to 27.7 ms | 66 to 82 ms | 4.7 to 5.7 ms | 231,000 to 245,000 |
+| with the change | **9.7 to 11.0 ms** | **22 to 30 ms** | 7.7 to 8.2 ms | 240,000 to 250,000 |
+
+- The p99 fell by 63% and the maximum by about 65%, with the same rate. The floor without any flush is about 7 ms, which
+  is the queue of 50 connections with a pipeline of 16 on one core.
+- The cost: the p95 rose from about 5 to about 8 ms, and the p50 from 2.6 to 2.8 ms, because the jobs take longer on the clock
+  (a flush 40% longer, a compaction 55% longer) and touch more requests, each one with a smaller delay.
+- With 2 and with 11 cores the change does nothing, and the measures did not show a systematic difference. With 2 cores the
+  mean rate was 4% lower in the build with the change over 7 rounds, which is one step of the resolution of `redis-benchmark`, and
+  it was not in the other two measures.
+- Not tested: a real machine with one CPU on Linux (a container with a limit of one CPU makes Go use one processor), and
+  with a pipeline of 64 or with `GET`.
+
