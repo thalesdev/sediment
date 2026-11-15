@@ -31,6 +31,10 @@ type Server struct {
 	closing   atomic.Bool
 	wg        sync.WaitGroup
 
+	sweepOnce sync.Once
+	sweepStop chan struct{}
+	sweepDone chan struct{}
+
 	started       time.Time
 	clients       atomic.Int64
 	totalConns    atomic.Uint64
@@ -89,6 +93,7 @@ func (s *Server) Serve(l net.Listener) error {
 	}
 	s.listeners[l] = struct{}{}
 	s.mu.Unlock()
+	s.startSweeper()
 	defer func() {
 		s.mu.Lock()
 		delete(s.listeners, l)
@@ -155,6 +160,7 @@ func (s *Server) accept(nc net.Conn) {
 // ctx ends first, it closes the connections that remain and returns the error of
 // ctx.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.stopSweeper()
 	s.mu.Lock()
 	s.closing.Store(true)
 	for l := range s.listeners {
@@ -197,4 +203,35 @@ func (s *Server) limitsFor(authed bool) resp.Limits {
 		return s.opts.Limits
 	}
 	return s.opts.PreAuthLimits
+}
+
+// startSweeper starts the goroutine that removes the elements of dead collections.
+// It starts one time, with the first listener, and it does not start if the
+// interval is negative.
+func (s *Server) startSweeper() {
+	s.sweepOnce.Do(func() {
+		if s.opts.SweepInterval <= 0 {
+			return
+		}
+		s.sweepStop = make(chan struct{})
+		s.sweepDone = make(chan struct{})
+		go func() {
+			defer close(s.sweepDone)
+			s.env.RunSweeper(s.sweepStop, s.opts.SweepInterval)
+		}()
+	})
+}
+
+// stopSweeper stops the sweeper and waits for its pass to end.
+func (s *Server) stopSweeper() {
+	s.sweepOnce.Do(func() {})
+	if s.sweepStop == nil {
+		return
+	}
+	select {
+	case <-s.sweepStop:
+	default:
+		close(s.sweepStop)
+	}
+	<-s.sweepDone
 }

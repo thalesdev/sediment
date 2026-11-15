@@ -5,6 +5,7 @@ package command
 import (
 	"log/slog"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -57,6 +58,9 @@ type Store interface {
 	// NewIterator returns an iterator over the keys, as of now. The caller must
 	// close it.
 	NewIterator(opts *shale.IterOptions) (shale.Iterator, error)
+
+	// Snapshot returns a view of the keys as of now. The caller must release it.
+	Snapshot() (*shale.Snapshot, error)
 
 	// Metrics returns the counts of the storage.
 	Metrics() shale.Metrics
@@ -140,6 +144,10 @@ type Env struct {
 	MaxAuthFailures int
 
 	nextID atomic.Uint64
+
+	uidMu    sync.Mutex
+	uidNext  uint64
+	uidLimit uint64
 }
 
 // NextID returns a new client id.
@@ -224,7 +232,7 @@ func (r *Registry) Specs() []*Spec {
 // NewRegistry returns a registry with all the commands of the server.
 func NewRegistry() *Registry {
 	r := &Registry{specs: make(map[string]*Spec)}
-	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), connectionCommands(), metaCommands()} {
+	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), connectionCommands(), metaCommands()} {
 		for _, s := range list {
 			r.specs[s.Name] = s
 		}

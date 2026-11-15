@@ -43,6 +43,11 @@ type Options struct {
 	// set it to move the clock.
 	Now func() time.Time
 
+	// SweepInterval is the time between two passes of the sweeper, which removes
+	// the elements of the hashes and sets that no key holds any more. The default
+	// is 1 minute. A negative value turns the sweeper off.
+	SweepInterval time.Duration
+
 	// IdleTimeout closes a connection that sends nothing for this long. The
 	// default is 10 minutes. A negative value turns it off.
 	IdleTimeout time.Duration
@@ -98,6 +103,7 @@ const (
 	defaultAuthDelay        = 100 * time.Millisecond
 	defaultAuthDelayMax     = 2 * time.Second
 	defaultMaxAuthFailures  = 5
+	defaultSweepInterval    = time.Minute
 )
 
 // preAuthLimits are the default limits of a client that has not signed in. They
@@ -126,6 +132,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.MaxReply <= 0 {
 		o.MaxReply = defaultMaxReply
+	}
+	if o.SweepInterval == 0 {
+		o.SweepInterval = defaultSweepInterval
 	}
 	if o.IdleTimeout == 0 {
 		o.IdleTimeout = defaultIdleTimeout

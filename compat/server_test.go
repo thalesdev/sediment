@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,6 +195,58 @@ func TestGoRedisClient(t *testing.T) {
 			t.Fatalf("SCAN TYPE visited %d keys: %v", n, err)
 		}
 	})
+
+	for _, proto := range []int{2, 3} {
+		t.Run(fmt.Sprintf("Should run the hash commands with go-redis on RESP%d", proto), func(t *testing.T) {
+			ctx := context.Background()
+			rdb := redis.NewClient(&redis.Options{Addr: addr, Protocol: proto})
+			defer rdb.Close()
+			key := fmt.Sprintf("hash%d", proto)
+			if n, err := rdb.HSet(ctx, key, "a", "1", "b", "2", "c", "3").Result(); err != nil || n != 3 {
+				t.Fatalf("HSET: %d, %v", n, err)
+			}
+			if got, err := rdb.HGet(ctx, key, "b").Result(); err != nil || got != "2" {
+				t.Fatalf("HGET: %q, %v", got, err)
+			}
+			all, err := rdb.HGetAll(ctx, key).Result()
+			if err != nil || len(all) != 3 || all["c"] != "3" {
+				t.Fatalf("HGETALL: %v, %v", all, err)
+			}
+			if n, err := rdb.HLen(ctx, key).Result(); err != nil || n != 3 {
+				t.Fatalf("HLEN: %d, %v", n, err)
+			}
+			if ok, err := rdb.HExists(ctx, key, "a").Result(); err != nil || !ok {
+				t.Fatalf("HEXISTS: %v, %v", ok, err)
+			}
+			if n, err := rdb.HIncrBy(ctx, key, "n", 5).Result(); err != nil || n != 5 {
+				t.Fatalf("HINCRBY: %d, %v", n, err)
+			}
+			if f, err := rdb.HIncrByFloat(ctx, key, "f", 1.5).Result(); err != nil || f != 1.5 {
+				t.Fatalf("HINCRBYFLOAT: %v, %v", f, err)
+			}
+			vals, err := rdb.HMGet(ctx, key, "a", "zz").Result()
+			if err != nil || len(vals) != 2 || vals[0] != "1" || vals[1] != nil {
+				t.Fatalf("HMGET: %v, %v", vals, err)
+			}
+			it := rdb.HScan(ctx, key, 0, "*", 2).Iterator()
+			seen := 0
+			for it.Next(ctx) {
+				seen++
+			}
+			if err := it.Err(); err != nil || seen != 10 {
+				t.Fatalf("HSCAN gave %d elements: %v", seen, err)
+			}
+			if n, err := rdb.HDel(ctx, key, "a", "b", "zz").Result(); err != nil || n != 2 {
+				t.Fatalf("HDEL: %d, %v", n, err)
+			}
+			if got, err := rdb.Type(ctx, key).Result(); err != nil || got != "hash" {
+				t.Fatalf("TYPE: %q, %v", got, err)
+			}
+			if err := rdb.Get(ctx, key).Err(); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
+				t.Fatalf("GET of a hash: %v", err)
+			}
+		})
+	}
 
 	t.Run("Should pipeline many commands with go-redis", func(t *testing.T) {
 		ctx := context.Background()

@@ -48,6 +48,11 @@ type Config struct {
 	// default of the server. A negative value turns it off.
 	Timeout time.Duration
 
+	// SweepInterval is the time between two passes of the sweeper that removes the
+	// elements of hashes and sets that no key holds. A zero value is the default of
+	// the server, 1 minute. A negative value turns it off.
+	SweepInterval time.Duration
+
 	// ReadTimeout is the time to send the rest of a command.
 	ReadTimeout time.Duration
 
@@ -136,6 +141,8 @@ func (c *Config) Set(key string, v []string) error {
 		return setInt(&c.MaxClients, key, val, 1, 1<<20)
 	case "timeout":
 		return setSeconds(&c.Timeout, key, val, true)
+	case "sweep-interval":
+		return setSeconds(&c.SweepInterval, key, val, true)
 	case "read-timeout":
 		return setSeconds(&c.ReadTimeout, key, val, false)
 	case "write-timeout":

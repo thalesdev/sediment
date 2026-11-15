@@ -146,6 +146,12 @@ func (e *Env) loadRecord(key []byte) (record, error) {
 	if err != nil {
 		return record{}, err
 	}
+	return e.liveRecord(raw)
+}
+
+// liveRecord decodes the stored value of a KEY record. A key whose deadline has
+// passed is reported as not found.
+func (e *Env) liveRecord(raw []byte) (record, error) {
 	r, err := decodeRecord(raw)
 	if err != nil {
 		return record{}, err

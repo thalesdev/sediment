@@ -156,6 +156,7 @@ func (s *Server) Config(pattern string) [][2]string {
 	settings := map[string]string{
 		"maxclients":         strconv.Itoa(s.opts.MaxClients),
 		"timeout":            strconv.Itoa(int(s.opts.IdleTimeout / time.Second)),
+		"sweep-interval":     strconv.Itoa(int(s.opts.SweepInterval / time.Second)),
 		"databases":          "1",
 		"save":               "",
 		"appendonly":         "no",
