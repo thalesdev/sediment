@@ -13,7 +13,7 @@ func fillTables(t *testing.T, db *DB, n int) {
 	for i := range n {
 		mustPut(t, db, string(keyN(i)), fmt.Sprintf("value-%08d", i))
 	}
-	waitIdle(t, db)
+	waitQuiet(t, db)
 	if db.Metrics().Tables == 0 {
 		t.Fatal("the test does not reach a table")
 	}
