@@ -15,11 +15,12 @@ func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
 
-// metaCommands returns COMMAND, INFO and CONFIG.
+// metaCommands returns COMMAND, INFO, ACL and CONFIG.
 func metaCommands() []*Spec {
 	return []*Spec{
 		{Name: "command", Arity: -1, Categories: acl.CatSlow | acl.CatConnection, Handler: commandCmd},
 		{Name: "info", Arity: -1, Categories: acl.CatSlow | acl.CatDangerous, Handler: info},
+		{Name: "acl", Arity: -2, Categories: acl.CatSlow | acl.CatAdmin | acl.CatDangerous, Handler: aclCmd},
 		{Name: "config", Arity: -2, Categories: acl.CatSlow | acl.CatAdmin | acl.CatDangerous, Handler: config},
 	}
 }
@@ -123,4 +124,54 @@ func specInfo(s *Spec) resp.Value {
 		resp.Integer(int64(s.FirstKey)), resp.Integer(int64(s.LastKey)), resp.Integer(int64(s.KeyStep)),
 		resp.Array(cats...),
 	)
+}
+
+// aclCmd is ACL WHOAMI, USERS, LIST, LOAD and CAT.
+func aclCmd(env *Env, c *Client, args [][]byte) resp.Value {
+	sub := strings.ToUpper(string(args[1]))
+	if sub == "WHOAMI" {
+		return resp.BulkString(c.User)
+	}
+	if sub == "CAT" {
+		if len(args) != 2 {
+			return WrongArgs("acl|cat")
+		}
+		var out []resp.Value
+		for _, n := range acl.CatAll.Names() {
+			out = append(out, resp.BulkString(strings.TrimPrefix(n, "@")))
+		}
+		return resp.Array(out...)
+	}
+	if env.Access == nil {
+		return resp.Error("ERR this server has no ACL file")
+	}
+	switch sub {
+	case "USERS":
+		var out []resp.Value
+		for _, n := range env.Access.Users() {
+			out = append(out, resp.BulkString(n))
+		}
+		return resp.Array(out...)
+	case "LIST":
+		var out []resp.Value
+		for _, l := range env.Access.List() {
+			out = append(out, resp.BulkString(l))
+		}
+		return resp.Array(out...)
+	case "LOAD":
+		warnings, err := env.Access.Reload()
+		if err != nil {
+			if env.Log != nil {
+				env.Log.Error("acl load failed", "err", err)
+			}
+			return resp.Error("ERR the ACL file was not loaded, the users did not change: " + printable([]byte(err.Error()), 200))
+		}
+		if env.Log != nil {
+			for _, w := range warnings {
+				env.Log.Warn("acl", "warning", w)
+			}
+		}
+		return replyOK
+	}
+	return resp.Error("ERR unknown subcommand '" + printable(args[1], 32) + "' of ACL")
 }

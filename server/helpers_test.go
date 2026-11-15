@@ -20,6 +20,17 @@ type client struct {
 
 func startServer(t *testing.T, o Options) (*Server, string) {
 	t.Helper()
+	return startServerOn(t, o, func(l net.Listener) net.Listener { return l })
+}
+
+func startOn(t *testing.T, o Options, wrap func(net.Listener) net.Listener) string {
+	t.Helper()
+	_, addr := startServerOn(t, o, wrap)
+	return addr
+}
+
+func startServerOn(t *testing.T, o Options, wrap func(net.Listener) net.Listener) (*Server, string) {
+	t.Helper()
 	if o.Store == nil {
 		db, err := shale.Open(t.TempDir(), shale.Options{})
 		if err != nil {
@@ -40,8 +51,9 @@ func startServer(t *testing.T, o Options) (*Server, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	addr := l.Addr().String()
 	done := make(chan error, 1)
-	go func() { done <- s.Serve(l) }()
+	go func() { done <- s.Serve(wrap(l)) }()
 	t.Cleanup(func() {
 		ctx, cancel := contextWithTimeout(5 * time.Second)
 		defer cancel()
@@ -52,7 +64,7 @@ func startServer(t *testing.T, o Options) (*Server, string) {
 			t.Errorf("serve: %v", err)
 		}
 	})
-	return s, l.Addr().String()
+	return s, addr
 }
 
 func dial(t *testing.T, addr string) *client {

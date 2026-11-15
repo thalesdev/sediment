@@ -68,6 +68,15 @@ type Access interface {
 
 	// Allowed reports whether the user can run the command.
 	Allowed(user, command string, categories acl.Category) bool
+
+	// Users returns the names of the users.
+	Users() []string
+
+	// List returns each user as a line of the ACL file.
+	List() []string
+
+	// Reload reads the users again from their file, and returns the warnings.
+	Reload() ([]string, error)
 }
 
 // Meta gives the commands the state of the server.
