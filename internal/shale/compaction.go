@@ -24,6 +24,11 @@ import (
 // must be sorted with ikey.Compare, and an entry with a key that is not valid is
 // an error.
 //
+// If cover is set, an entry that a range delete of the compaction covers is
+// dropped, whatever its kind, because the range delete has a sequence number
+// above the one of the newest version, and so above the ones of the older
+// versions too.
+//
 // If filter is set, it is called for the first entry of each user key when that
 // entry is a put. If it returns true, the entry is dropped when dropDeletes is
 // true, and otherwise it is replaced by a delete with the same sequence number,
@@ -33,6 +38,7 @@ type dropIter struct {
 	src         merge.Source
 	dropDeletes bool
 	filter      func(key, value []byte) bool
+	cover       *tombIndex
 	last        []byte
 	haveLast    bool
 	tombstone   []byte
@@ -103,6 +109,10 @@ func (d *dropIter) skip() {
 		}
 		d.last = append(d.last[:0], user...)
 		d.haveLast = true
+		if d.cover.maxCover(user, ikey.MaxSeq) > seq {
+			d.src.Next()
+			continue
+		}
 		if kind == ikey.KindDelete && d.dropDeletes {
 			d.src.Next()
 			continue
@@ -199,10 +209,12 @@ func (db *DB) compact(inputs []*table, includesOldest bool) (*table, error) {
 	sources := make([]merge.Source, len(inputs))
 	smallestSeq, largestSeq := uint64(ikey.MaxSeq), uint64(0)
 	var read uint64
+	var tombs []rangeTomb
 	for i, t := range inputs {
 		sources[i] = t.reader.NewIterator()
 		read += t.meta.Size
 		smallestSeq, largestSeq = min(smallestSeq, t.meta.SmallestSeq), max(largestSeq, t.meta.LargestSeq)
+		tombs = append(tombs, t.tombs...)
 	}
 	merged := merge.New(ikey.Compare, sources...)
 	defer merged.Close()
@@ -210,7 +222,11 @@ func (db *DB) compact(inputs []*table, includesOldest bool) (*table, error) {
 	number := db.nextFile.Add(1) - 1
 	drop := newDropIter(merged, includesOldest)
 	drop.filter = db.opts.CompactionFilter
-	meta, err := db.writeCompacted(number, drop, smallestSeq, largestSeq)
+	drop.cover = newTombIndex(tombs)
+	if includesOldest {
+		tombs = nil
+	}
+	meta, err := db.writeCompacted(number, drop, tombs, smallestSeq, largestSeq)
 	if err != nil {
 		return nil, err
 	}
@@ -245,12 +261,13 @@ func (db *DB) compact(inputs []*table, includesOldest bool) (*table, error) {
 	return output, nil
 }
 
-// writeCompacted writes the entries of it to the table file with number, flushes
-// the file and the directory, and returns the description of the table. It
-// returns nil, and writes no file, if it has no entry.
-func (db *DB) writeCompacted(number uint64, it *dropIter, smallestSeq, largestSeq uint64) (*manifest.TableMeta, error) {
+// writeCompacted writes the entries of it, and the range deletes tombs, to the
+// table file with number, flushes the file and the directory, and returns the
+// description of the table. It returns nil, and writes no file, if it has no entry
+// and no range delete.
+func (db *DB) writeCompacted(number uint64, it *dropIter, tombs []rangeTomb, smallestSeq, largestSeq uint64) (*manifest.TableMeta, error) {
 	it.SeekToFirst()
-	if !it.Valid() {
+	if !it.Valid() && len(tombs) == 0 {
 		if err := it.Err(); err != nil {
 			return nil, fmt.Errorf("shale: compacting: %w", err)
 		}
@@ -281,6 +298,12 @@ func (db *DB) writeCompacted(number uint64, it *dropIter, smallestSeq, largestSe
 	}
 	if err := it.Err(); err != nil {
 		return fail(err)
+	}
+	if err := addTombs(w, tombs); err != nil {
+		return fail(err)
+	}
+	if smallest == nil {
+		smallest, largest = tombBounds(tombs)
 	}
 	if err := w.Finish(); err != nil {
 		return fail(err)

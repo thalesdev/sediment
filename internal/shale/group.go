@@ -5,6 +5,7 @@ package shale
 import (
 	"sync"
 
+	"github.com/thalesdev/sediment/internal/batch"
 	"github.com/thalesdev/sediment/internal/ikey"
 )
 
@@ -29,7 +30,7 @@ const (
 // writer is a Put, a Delete or a Batch that waits in the queue of the DB. A
 // writer with ops is a batch, and the other fields are not used.
 type writer struct {
-	kind  ikey.Kind
+	kind  batch.Kind
 	key   []byte
 	value []byte
 	ops   []batchOp
@@ -67,7 +68,7 @@ var writerPool = sync.Pool{New: func() any { return new(writer) }}
 // the last sequence number visible to Get. Then it wakes the writes of the group
 // with the result. A write that is not the leader waits until the leader of its
 // group wakes it, or until it becomes the leader.
-func (db *DB) write(kind ikey.Kind, key, value []byte) error {
+func (db *DB) write(kind batch.Kind, key, value []byte) error {
 	w := writerPool.Get().(*writer)
 	*w = writer{kind: kind, key: key, value: value}
 	return db.submit(w)
@@ -116,19 +117,23 @@ func (db *DB) lead(w *writer) error {
 		return errSeqExhausted
 	}
 	db.batch.Reset(first)
+	add := func(kind batch.Kind, key, value []byte) {
+		switch kind {
+		case batch.KindPut:
+			db.batch.Put(key, value)
+		case batch.KindRangeDelete:
+			db.batch.DeleteRange(key, value)
+		default:
+			db.batch.Delete(key)
+		}
+	}
 	for _, g := range group {
 		if g.ops != nil {
 			for _, op := range g.ops {
-				if op.kind == ikey.KindPut {
-					db.batch.Put(op.key, op.value)
-				} else {
-					db.batch.Delete(op.key)
-				}
+				add(op.kind, op.key, op.value)
 			}
-		} else if g.kind == ikey.KindPut {
-			db.batch.Put(g.key, g.value)
 		} else {
-			db.batch.Delete(g.key)
+			add(g.kind, g.key, g.value)
 		}
 	}
 	mem := db.state.Load().mem
@@ -164,22 +169,27 @@ func (db *DB) lead(w *writer) error {
 // next Open reads the record from the log.
 func (db *DB) insertGroup(mem *memtable, group []*writer, first uint64) error {
 	seq := first
+	insert := func(kind batch.Kind, key, value []byte) error {
+		defer func() { seq++ }()
+		if kind == batch.KindRangeDelete {
+			mem.addRange(key, value, seq)
+			return nil
+		}
+		db.keyBuf = ikey.Append(db.keyBuf[:0], key, seq, ikey.Kind(kind))
+		return mem.list.Insert(db.keyBuf, value)
+	}
 	for _, g := range group {
 		if g.ops != nil {
 			for _, op := range g.ops {
-				db.keyBuf = ikey.Append(db.keyBuf[:0], op.key, seq, op.kind)
-				if err := mem.list.Insert(db.keyBuf, op.value); err != nil {
+				if err := insert(op.kind, op.key, op.value); err != nil {
 					return err
 				}
-				seq++
 			}
 			continue
 		}
-		db.keyBuf = ikey.Append(db.keyBuf[:0], g.key, seq, g.kind)
-		if err := mem.list.Insert(db.keyBuf, g.value); err != nil {
+		if err := insert(g.kind, g.key, g.value); err != nil {
 			return err
 		}
-		seq++
 	}
 	return nil
 }

@@ -122,7 +122,7 @@ func (db *DB) open() (err error) {
 
 	if entries > 0 {
 		number := db.nextFile.Add(1) - 1
-		meta, err := db.writeTable(replayed.list, number)
+		meta, err := db.writeTable(replayed, number)
 		if err != nil {
 			return err
 		}
@@ -223,7 +223,7 @@ func (db *DB) replayLog(mem *memtable, n, last uint64) (uint64, int, error) {
 				return
 			}
 			if kind == batch.KindRangeDelete {
-				insertErr = errRangeDelete
+				mem.addRange(key, value, seq)
 				return
 			}
 			insertErr = mem.list.Insert(ikey.Append(nil, key, seq, ikey.Kind(kind)), value)

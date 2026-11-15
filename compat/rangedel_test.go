@@ -7,11 +7,18 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/storage"
+	"github.com/syndtr/goleveldb/leveldb/table"
+	"github.com/syndtr/goleveldb/leveldb/util"
 
 	"github.com/thalesdev/sediment/internal/batch"
+	"github.com/thalesdev/sediment/internal/ikey"
+	"github.com/thalesdev/sediment/internal/shale"
 	"github.com/thalesdev/sediment/internal/sstable"
 )
 
@@ -162,4 +169,103 @@ func metaindexOffset(t *testing.T, b []byte) int {
 		t.Fatal("malformed footer")
 	}
 	return int(off)
+}
+
+func TestGoleveldbReadsShaleTablesWithRangeDeletes(t *testing.T) {
+	rng := rand.New(rand.NewPCG(61, 67))
+	dir := t.TempDir()
+	db, err := shale.Open(dir, shale.Options{MemtableSize: 4096})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := map[string][]byte{}
+	for i := range 4000 {
+		user := []byte(fmt.Sprintf("user-%03d", rng.IntN(300)))
+		switch rng.IntN(12) {
+		case 0:
+			a, b := rng.IntN(300), rng.IntN(300)
+			if a > b {
+				a, b = b, a
+			}
+			start, end := fmt.Sprintf("user-%03d", a), fmt.Sprintf("user-%03d", b)
+			if err := db.DeleteRange([]byte(start), []byte(end)); err != nil {
+				t.Fatal(err)
+			}
+			for k := range model {
+				if k >= start && k < end {
+					delete(model, k)
+				}
+			}
+		case 1:
+			if err := db.Delete(user); err != nil {
+				t.Fatal(err)
+			}
+			delete(model, string(user))
+		default:
+			value := fmt.Appendf(nil, "%s=%d", user, i)
+			if err := db.Put(user, value); err != nil {
+				t.Fatal(err)
+			}
+			model[string(user)] = value
+		}
+	}
+	it, err := db.NewIterator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for it.SeekToFirst(); it.Valid(); it.Next() {
+		want, ok := model[string(it.Key())]
+		if !ok || !bytes.Equal(want, it.Value()) {
+			t.Fatalf("shale returned %q, which the model does not have", it.Key())
+		}
+		n++
+	}
+	if err := it.Err(); err != nil {
+		t.Fatal(err)
+	}
+	it.Close()
+	if n != len(model) {
+		t.Fatalf("shale returned %d keys, the model has %d", n, len(model))
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := filepath.Glob(filepath.Join(dir, "*.sd"))
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("found %d table files, %v", len(paths), err)
+	}
+	withRangeDels := 0
+	for i, path := range paths {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(b, []byte("shale.range_del")) {
+			withRangeDels++
+		}
+		r, err := table.NewReader(bytes.NewReader(b), int64(len(b)), storage.FileDesc{Type: storage.TypeTable, Num: int64(i + 1)}, nil, util.NewBufferPool(4096), internalLevelOptions())
+		if err != nil {
+			t.Fatalf("goleveldb could not open %s: %v", filepath.Base(path), err)
+		}
+		tit := r.NewIterator(nil, nil)
+		var previous []byte
+		for tit.Next() {
+			if previous != nil && ikey.Compare(previous, tit.Key()) >= 0 {
+				t.Fatalf("%s: keys are not in order", filepath.Base(path))
+			}
+			previous = append(previous[:0], tit.Key()...)
+			if _, _, _, err := ikey.Parse(tit.Key()); err != nil {
+				t.Fatalf("%s: %v", filepath.Base(path), err)
+			}
+		}
+		if err := tit.Error(); err != nil {
+			t.Fatalf("%s: %v", filepath.Base(path), err)
+		}
+		tit.Release()
+	}
+	if withRangeDels == 0 {
+		t.Fatal("no table has range deletes, so the test does not cover them")
+	}
 }
