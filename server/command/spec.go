@@ -54,6 +54,10 @@ type Store interface {
 	// Write applies a batch as one unit.
 	Write(b *shale.Batch) error
 
+	// NewIterator returns an iterator over the keys, as of now. The caller must
+	// close it.
+	NewIterator(opts *shale.IterOptions) (shale.Iterator, error)
+
 	// Metrics returns the counts of the storage.
 	Metrics() shale.Metrics
 }
@@ -175,6 +179,8 @@ type Client struct {
 
 	// Created is the time of the connection.
 	Created time.Time
+
+	scan scanState
 }
 
 // Registry is a set of commands.
@@ -218,7 +224,7 @@ func (r *Registry) Specs() []*Spec {
 // NewRegistry returns a registry with all the commands of the server.
 func NewRegistry() *Registry {
 	r := &Registry{specs: make(map[string]*Spec)}
-	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), connectionCommands(), metaCommands()} {
+	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), connectionCommands(), metaCommands()} {
 		for _, s := range list {
 			r.specs[s.Name] = s
 		}

@@ -116,3 +116,13 @@ func deadlineAt(base, n, unit int64) (int64, bool) {
 	}
 	return base + n*unit, true
 }
+
+// isLive reports whether a stored value is alive at the time now, which is in
+// milliseconds. It returns an error if the header of the value is not valid.
+func isLive(raw []byte, now int64) (bool, error) {
+	_, deadline, err := decodeValue(raw)
+	if err != nil {
+		return false, err
+	}
+	return deadline == 0 || deadline > now, nil
+}

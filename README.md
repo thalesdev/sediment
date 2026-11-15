@@ -32,7 +32,7 @@ that had returned survives a `kill -9`.
 |---|---|
 | Shale, the storage engine | Done: write-ahead log, memtable (a skiplist without a lock), SSTables, block cache, MANIFEST, compaction, group commit, atomic batches |
 | `resp`, the protocol | Done: RESP2 and RESP3, fuzzed, with limits on every size |
-| `sedimentd`, the RESP server | Done for strings: `GET`, `SET`, `DEL`, `EXISTS`, `MGET`, `MSET`, counters (`INCR`, `DECR`, `APPEND`, `GETDEL` and more), key expiry (`SET EX`, `EXPIRE`, `TTL`, `PERSIST`), pipelining, `HELLO 3` |
+| `sedimentd`, the RESP server | Done for strings: `GET`, `SET`, `DEL`, `EXISTS`, `MGET`, `MSET`, counters (`INCR`, `DECR`, `APPEND`, `GETDEL` and more), key expiry (`SET EX`, `EXPIRE`, `TTL`, `PERSIST`), `SCAN`, `KEYS`, pipelining, `HELLO 3` |
 | Security | TLS 1.3 and mTLS, users with an ACL file, safe defaults. Key patterns and run-time `ACL SETUSER` come later |
 | Public Go API | Not yet: Shale lives in `internal/shale` until the server shapes it |
 
@@ -97,25 +97,70 @@ Reproduce them with `make bench-compare`.
 
 ## How it works
 
+A command goes through the server before it reaches the engine:
+
+```
+ client
+   |   TCP, or TLS 1.3 with an optional client certificate (mTLS)
+   v
+ connection        limit on clients, time to send a command, time to take a reply,
+   |               and smaller limits on the size of a command before sign in
+   v
+ command check     unknown command, number of arguments, AUTH, then the ACL
+   |               (categories such as @read, @write and @dangerous)
+   v
+ command layer     size of the key, lock per key for a read-modify-write,
+   |               TTL tag of the value, limit on the size of a reply
+   v
+ Shale             the engine, below
+```
+
+Inside Shale a write is a sequence, and a read looks at a few places:
+
 ```
                      Put / Delete                         Get
                           |                                |
                     write queue (group commit)       memtable
                           |                          frozen memtable
-              +-----------+-----------+              tables, newest first
-              |                       |                    |
-        write-ahead log          memtable (skip list)      +--> bloom filter
-        (one record per group)         |                   +--> index block
-                                       | full              +--> one data block
-                                       v
-                              flush (background)
-                                       |
-                                       v
-                       SSTables ---> MANIFEST (one edit per change)
+                1. room for the group?               tables, newest first
+                   (freeze the memtable if it              |
+                    is full, wait for a flush or           +--> bloom filter
+                    the compaction if they lag)            +--> index block
+                          |                                +--> one data block
+                2. write-ahead log                                ^
+                   (one record per group)                    block cache
+                          |                                  (the file, on a miss)
+                3. memtable (skip list)
                           |
-                          v
-                 size-tiered compaction (background)
+                4. last sequence number published, the write returns
+
+ background:   frozen memtable --flush--> SSTable ---> MANIFEST (one edit per change)
+               SSTables --size-tiered compaction--> fewer SSTables, with the old
+               versions of a key and the expired keys dropped
 ```
+
+A snapshot and an iterator read a view that does not change while they run. `SCAN`,
+`KEYS`, `DBSIZE` and `RANDOMKEY` open an iterator, read, and close it inside one command:
+
+```
+ DB.Snapshot / DB.NewIterator
+   |
+   1. take the read state (memtable, frozen memtable, tables),
+   |  then the last sequence number
+   |
+   2. merge the sources in key order: the memtables, and the tables that can hold the range
+   |
+   3. for each key, return the newest version that is not above the sequence number,
+   |  and hide a key whose newest version is a delete
+   |
+   4. Release or Close gives the state back. Until then the table files stay on disk,
+      even if a compaction replaced them
+```
+
+A data block comes from the block cache when it is there, and from the file when it
+is not. All the tables of a DB share one cache, 8 MiB by default and 64 MiB in
+`sedimentd`. It helps a hot set of keys. A read at random over data much larger than
+the cache is almost all misses.
 
 Every internal key carries a sequence number. A table has a range of sequence
 numbers, and the ranges do not overlap, so the order of the tables is the order

@@ -28,8 +28,9 @@ sediment is a key-value database that speaks the Redis protocol (RESP), built on
 ### 7. Server (`sedimentd`)
 - [x] **`resp`**: RESP2 and RESP3 reader and writer without the network, a limit on every size, allocation that follows the bytes that arrive, fuzzed. See [docs/RESP.md](docs/RESP.md).
 - [x] **Command layer** separate from the protocol, so another protocol can be added later.
-- [x] **Commands**: `GET`, `SET` (`NX`, `XX`, `GET`, `EX`, `PX`, `EXAT`, `PXAT`, `KEEPTTL`), `DEL`, `EXISTS`, `MGET`, `MSET`, `INCR`, `DECR`, `INCRBY`, `DECRBY`, `APPEND`, `STRLEN`, `SETNX`, `GETSET`, `GETDEL`, `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `PING`, `ECHO`, `QUIT`, `SELECT`, `AUTH`, `HELLO`, `CLIENT`, `COMMAND`, `INFO`, `CONFIG GET`, `ACL` (`WHOAMI`, `USERS`, `LIST`, `LOAD`, `CAT`).
+- [x] **Commands**: `GET`, `SET` (`NX`, `XX`, `GET`, `EX`, `PX`, `EXAT`, `PXAT`, `KEEPTTL`), `DEL`, `EXISTS`, `MGET`, `MSET`, `INCR`, `DECR`, `INCRBY`, `DECRBY`, `APPEND`, `STRLEN`, `SETNX`, `GETSET`, `GETDEL`, `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `SCAN`, `KEYS`, `DBSIZE`, `RANDOMKEY`, `TYPE`, `PING`, `ECHO`, `QUIT`, `SELECT`, `AUTH`, `HELLO`, `CLIENT`, `COMMAND`, `INFO`, `CONFIG GET`, `ACL` (`WHOAMI`, `USERS`, `LIST`, `LOAD`, `CAT`).
 - [x] **Key expiry** (TTL): every value has a 1 byte tag, and 8 more bytes of deadline in Unix milliseconds if the key expires. Reads treat an expired key as missing, and a compaction drops it through `Options.CompactionFilter`. The engine format did not change. A data directory written before this change holds values without the tag and is not readable.
+- [x] **Snapshots and range iterators** in Shale (`DB.Snapshot`, `DB.NewIterator`, bounds, `Seek`): a view is a read state plus a sequence number, so a flush or a compaction does not change it. It holds the memtables and the table files that it reads until it is released, so it is for short reads. The server runs `SCAN`, `KEYS`, `DBSIZE`, `RANDOMKEY` and `TYPE` with it, one iterator for each command.
 - [x] **Atomic multi-key writes** in Shale (`DB.Write`), for `MSET` and `DEL` of many keys.
 - [x] **Pipelining**, with a flush only when the reader would block.
 - [x] **Per-connection panic recovery**, one goroutine per connection.
@@ -63,7 +64,6 @@ Measured or discussed, and not to be proposed again without a new reason.
 
 Nothing is started. The candidates, by what each one unlocks:
 - **A formal model of Shale in TLA+.** It was planned as the first item after the finish line, and the last changes (memtable, flush, block cache, order of reads) touched the parts that it covers.
-- **Iterators and snapshots**, which unlock `SCAN`, `KEYS` and transactions.
 - **ACL phase 2**, which is the debt of the first phase of the security work.
 
 ## Backlog
@@ -73,7 +73,8 @@ Each item has the reason it would be picked up.
 | Item | When |
 |---|---|
 | Formal model of Shale in TLA+ (WAL, flush, MANIFEST, compaction, reference counting, `Get` ordering), checked across every interleaving and crash point | the first of the candidates in "Next" |
-| Snapshots, iterators and `SCAN` | when a command needs a range read |
+| Snapshots that live across commands (for `MULTI`, `EXEC`, `WATCH`): they need a registry of the oldest live snapshot, so that a compaction keeps the versions that one can see | when a command needs a view that lasts more than one command |
+| Reverse iteration and `SeekToLast` | when a command needs the last key |
 | ACL phase 2: key patterns (`~prefix:*`, `%R~`, `%W~`), `ACL SETUSER`, `DELUSER`, `SAVE`, `LOG`, selectors, rules for subcommands, user from the CN of a client certificate | when a deployment needs more than one kind of client on the same data |
 | Rate limit of sign in attempts per address, and a log of denied commands | before the server is exposed to untrusted networks |
 | `CLIENT LIST`, `CLIENT KILL`, slow log | when an operator needs to see and cut clients |

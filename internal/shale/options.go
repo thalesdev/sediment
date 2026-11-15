@@ -60,6 +60,10 @@ type Options struct {
 	// it.
 	getHook func(stage string)
 
+	// iterHook is called when a snapshot or an iterator holds the state and has
+	// not read the sequence number yet. Only the tests of the package set it.
+	iterHook func(stage string)
+
 	// disableCompaction stops the compaction. Only the tests of the package set
 	// it.
 	disableCompaction bool

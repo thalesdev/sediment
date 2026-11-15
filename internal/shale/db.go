@@ -155,7 +155,12 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 	if db.opts.getHook != nil {
 		db.opts.getHook("state")
 	}
-	seq := db.lastSeq.Load()
+	return getAt(state, db.lastSeq.Load(), key)
+}
+
+// getAt returns a copy of the value of key as the state and the sequence number
+// see it.
+func getAt(state *readState, seq uint64, key []byte) ([]byte, error) {
 	lookup := ikey.AppendLookup(nil, key, seq)
 	for _, m := range []*memtable{state.mem, state.imm} {
 		if m == nil {
