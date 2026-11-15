@@ -175,5 +175,45 @@ The same run did `SET`, `GET`, `DEL`, `MSET`, `MGET` and `HELLO 3` with `redis-c
 8.10.3, wrote 200,000 keys with `redis-benchmark`, killed the server with `kill -9`
 and read a key written just before the kill after the restart.
 
-Next steps, in this order, each with its before and after numbers: profile the
-server without a pipeline, and only then the block pool and the pipeline batch.
+### Against Redis 8.10.3, same machine and settings
+
+Redis with `--save "" --appendonly no`, sediment with `Sync` off, the same
+`redis-benchmark` (`-t get,set -n 500000 -r 100000 -d 100`, 50 clients).
+
+| Workload | Redis | sediment |
+|---|---:|---:|
+| `SET`, 1 client thread | 59,298 | 58,370 |
+| `GET`, 1 client thread | 57,958 | 59,552 |
+| `SET`, 4 client threads | 66,658 | 105,219 |
+| `GET`, 4 client threads | 66,658 | 117,564 |
+| `SET`, 1 connection, avg latency | 0.039 ms | 0.052 ms |
+| `GET`, 1 connection, avg latency | 0.039 ms | 0.050 ms |
+| `SET`, 4 client threads, p99 | 0.855 ms | 2.159 ms |
+| `GET`, 4 client threads, p99 | 0.839 ms | 1.415 ms |
+
+What this says:
+
+- With one client thread both servers give about 59,000 per second, so the first
+  numbers of this file (47,000 to 52,000) were the limit of `redis-benchmark` and not
+  of the server.
+- With four client threads sediment does 1.6 to 1.8 times what Redis does, because it
+  uses many cores and Redis runs commands on one.
+- One round trip costs about 12 microseconds more than in Redis. The CPU profile puts
+  67% of the time in system calls (the reply `write` is the largest) and about 25%
+  in the netpoller and the scheduler. The code of the commands is 26%. The server
+  used 1.2 of 11 cores while the clients pushed as hard as they could.
+- The tail is worse: p99 of 1.4 to 2.2 ms against 0.85 ms, and a maximum of 12 to
+  25 ms against 1 ms. The cause is not known. The garbage collector is the first
+  suspect, because `sstable.readBlock` is 83% of the bytes allocated, about 4 KiB for
+  each `GET` that reaches a table.
+- The runs with `-P 16` are not reliable. Redis gives exactly 666,666.69 for `SET`
+  and for `GET`, and sediment gives exactly 500,000.00 for `GET`. A run of 500,000
+  commands ends in less than a second, and the result has a coarse resolution. They
+  must be repeated with at least 5,000,000 commands.
+- The profile used `-memprofilerate 1`, which adds some 5% to 8% of CPU to the
+  numbers of the profile.
+
+Next steps, in this order, each with its before and after numbers: repeat the
+pipelined runs with more commands, then the block pool or cache for `GET` and its
+effect on the tail, and the pipeline batch only if the pipelined `SET` is still
+about half of Redis.
