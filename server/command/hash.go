@@ -447,8 +447,14 @@ func hdump(env *Env, name string, key []byte, fields, values bool) resp.Value {
 // last field that a call looked at. If the hash was deleted and made again, the
 // scan ends.
 func hscan(env *Env, cl *Client, args [][]byte) resp.Value {
+	return collScan(env, cl, args, "hscan", typeHash, true)
+}
+
+// collScan is HSCAN and SSCAN. A page has the fields, and the values if the
+// collection is a hash.
+func collScan(env *Env, cl *Client, args [][]byte, name string, typ valueType, withValues bool) resp.Value {
 	if len(args) < 3 {
-		return WrongArgs("hscan")
+		return WrongArgs(name)
 	}
 	key := args[1]
 	if bad, ok := env.checkKey(key); !ok {
@@ -488,9 +494,9 @@ func hscan(env *Env, cl *Client, args [][]byte) resp.Value {
 			return replyBadCursor
 		}
 	}
-	snap, c, err := env.readColl(key, typeHash)
+	snap, c, err := env.readColl(key, typ)
 	if err != nil {
-		return env.storageError("hscan", err)
+		return env.storageError(name, err)
 	}
 	defer snap.Release()
 	if !c.found || (resume != nil && !bytes.HasPrefix(resume, elementPrefix(c.slot, c.uid))) {
@@ -498,7 +504,7 @@ func hscan(env *Env, cl *Client, args [][]byte) resp.Value {
 	}
 	it, err := snap.NewIterator(elementBounds(c.slot, c.uid))
 	if err != nil {
-		return env.storageError("hscan", err)
+		return env.storageError(name, err)
 	}
 	defer it.Close()
 	if resume == nil {
@@ -515,25 +521,32 @@ func hscan(env *Env, cl *Client, args [][]byte) resp.Value {
 	for it.Valid() && examined < count {
 		field, err := fieldOf(it.Key())
 		if err != nil {
-			return env.storageError("hscan", err)
+			return env.storageError(name, err)
 		}
 		payload, err := decodeElement(it.Value())
 		if err != nil {
-			return env.storageError("hscan", err)
+			return env.storageError(name, err)
 		}
 		if matchAll(pattern) || globMatch(pattern, field) {
-			if env.MaxReply > 0 && total+len(field)+len(payload) > env.MaxReply && len(page) > 0 {
+			size := len(field)
+			if withValues {
+				size += len(payload)
+			}
+			if env.MaxReply > 0 && total+size > env.MaxReply && len(page) > 0 {
 				break
 			}
-			total += len(field) + len(payload)
-			page = append(page, resp.Bulk(bytes.Clone(field)), resp.Bulk(bytes.Clone(payload)))
+			total += size
+			page = append(page, resp.Bulk(bytes.Clone(field)))
+			if withValues {
+				page = append(page, resp.Bulk(bytes.Clone(payload)))
+			}
 		}
 		last = append(last[:0], it.Key()...)
 		examined++
 		it.Next()
 	}
 	if err := it.Err(); err != nil {
-		return env.storageError("hscan", err)
+		return env.storageError(name, err)
 	}
 	next := "0"
 	if it.Valid() && last != nil {

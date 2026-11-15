@@ -134,37 +134,57 @@ func (c *coll) finish(b *shale.Batch, count uint64) error {
 	return c.env.Store.Write(b)
 }
 
-// readColl reads a collection as of a snapshot. The caller must release the
-// snapshot, which it gets back, unless err is not nil.
-func (e *Env) readColl(key []byte, typ valueType) (snap *shale.Snapshot, c *coll, err error) {
-	if snap, err = e.Store.Snapshot(); err != nil {
+// collAt reads a collection as of a snapshot. A key that is absent or expired
+// gives a collection that is not found, and a key of another type gives
+// errWrongType.
+func (e *Env) collAt(snap *shale.Snapshot, key []byte, typ valueType) (*coll, error) {
+	c := &coll{env: e, key: key, slot: slotOf(key), typ: typ}
+	raw, err := snap.Get(keyOf(key))
+	if isNotFound(err) {
+		return c, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	rec, err := e.liveRecord(raw)
+	switch {
+	case isNotFound(err):
+		return c, nil
+	case err != nil:
+		return nil, err
+	case rec.typ != typ:
+		return nil, errWrongType
+	}
+	c.rec, c.found = rec, true
+	c.uid, c.count = rec.collection()
+	return c, nil
+}
+
+// readColl takes a snapshot and reads a collection as of it. The caller must
+// release the snapshot, which it gets back, unless err is not nil.
+func (e *Env) readColl(key []byte, typ valueType) (*shale.Snapshot, *coll, error) {
+	snap, err := e.Store.Snapshot()
+	if err != nil {
 		return nil, nil, err
 	}
-	c = &coll{env: e, key: key, slot: slotOf(key), typ: typ}
-	raw, err := snap.Get(keyOf(key))
-	switch {
-	case err == nil:
-		rec, derr := e.liveRecord(raw)
-		switch {
-		case derr == nil && rec.typ != typ:
-			err = errWrongType
-		case derr == nil:
-			c.rec, c.found = rec, true
-			c.uid, c.count = rec.collection()
-			err = nil
-		case isNotFound(derr):
-			err = nil
-		default:
-			err = derr
-		}
-	case isNotFound(err):
-		err = nil
-	}
+	c, err := e.collAt(snap, key, typ)
 	if err != nil {
 		snap.Release()
 		return nil, nil, err
 	}
 	return snap, c, nil
+}
+
+// hasIn tells if a field is in the collection as of the snapshot.
+func (c *coll) hasIn(snap *shale.Snapshot, field []byte) (bool, error) {
+	if !c.found {
+		return false, nil
+	}
+	_, err := snap.Get(c.elem(field))
+	if isNotFound(err) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // each calls fn for each field of the collection in the snapshot, with its

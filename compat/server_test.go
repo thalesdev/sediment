@@ -248,6 +248,62 @@ func TestGoRedisClient(t *testing.T) {
 		})
 	}
 
+	for _, proto := range []int{2, 3} {
+		t.Run(fmt.Sprintf("Should run the set commands with go-redis on RESP%d", proto), func(t *testing.T) {
+			ctx := context.Background()
+			rdb := redis.NewClient(&redis.Options{Addr: addr, Protocol: proto})
+			defer rdb.Close()
+			a, b := fmt.Sprintf("seta%d", proto), fmt.Sprintf("setb%d", proto)
+			if n, err := rdb.SAdd(ctx, a, "1", "2", "3", "4").Result(); err != nil || n != 4 {
+				t.Fatalf("SADD: %d, %v", n, err)
+			}
+			if n, err := rdb.SAdd(ctx, b, "3", "4", "5").Result(); err != nil || n != 3 {
+				t.Fatalf("SADD: %d, %v", n, err)
+			}
+			if got, err := rdb.SMembers(ctx, a).Result(); err != nil || len(got) != 4 {
+				t.Fatalf("SMEMBERS: %v, %v", got, err)
+			}
+			if ok, err := rdb.SIsMember(ctx, a, "2").Result(); err != nil || !ok {
+				t.Fatalf("SISMEMBER: %v, %v", ok, err)
+			}
+			if got, err := rdb.SInter(ctx, a, b).Result(); err != nil || len(got) != 2 {
+				t.Fatalf("SINTER: %v, %v", got, err)
+			}
+			if got, err := rdb.SUnion(ctx, a, b).Result(); err != nil || len(got) != 5 {
+				t.Fatalf("SUNION: %v, %v", got, err)
+			}
+			if got, err := rdb.SDiff(ctx, a, b).Result(); err != nil || len(got) != 2 {
+				t.Fatalf("SDIFF: %v, %v", got, err)
+			}
+			if n, err := rdb.SUnionStore(ctx, a+"u", a, b).Result(); err != nil || n != 5 {
+				t.Fatalf("SUNIONSTORE: %d, %v", n, err)
+			}
+			if n, err := rdb.SCard(ctx, a).Result(); err != nil || n != 4 {
+				t.Fatalf("SCARD: %d, %v", n, err)
+			}
+			if n, err := rdb.SRem(ctx, a, "1", "9").Result(); err != nil || n != 1 {
+				t.Fatalf("SREM: %d, %v", n, err)
+			}
+			if got, err := rdb.SPop(ctx, a).Result(); err != nil || got == "" {
+				t.Fatalf("SPOP: %q, %v", got, err)
+			}
+			if got, err := rdb.SRandMemberN(ctx, b, 2).Result(); err != nil || len(got) != 2 {
+				t.Fatalf("SRANDMEMBER: %v, %v", got, err)
+			}
+			it := rdb.SScan(ctx, b, 0, "*", 2).Iterator()
+			seen := 0
+			for it.Next(ctx) {
+				seen++
+			}
+			if err := it.Err(); err != nil || seen != 3 {
+				t.Fatalf("SSCAN saw %d members: %v", seen, err)
+			}
+			if got, err := rdb.Type(ctx, b).Result(); err != nil || got != "set" {
+				t.Fatalf("TYPE: %q, %v", got, err)
+			}
+		})
+	}
+
 	t.Run("Should pipeline many commands with go-redis", func(t *testing.T) {
 		ctx := context.Background()
 		rdb := redis.NewClient(&redis.Options{Addr: addr})
