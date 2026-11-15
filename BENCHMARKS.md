@@ -476,3 +476,25 @@ without the cache and the build with it in the same session (benchstat, goleveld
 - Not measured: the `GET` through the network with `redis-benchmark`, and the memory of a cache of
   64 MiB in a server with many connections.
 
+### The pipelined SET after the skiplist and the cache, all the cores
+
+`redis-benchmark`, 4 threads, 50 clients, 3,000,000 keys of 100 bytes, 6 rounds that alternate
+Redis (one thread, `--appendonly yes --appendfsync no`) and sediment (commit `1627bb3`, all the
+cores), `SET` only. Medians of the rounds. The p99 is the seventh column of the lines of each round.
+
+| `SET` | Redis | sediment | |
+|---|---:|---:|---|
+| `-P 16`, per second | 484,701 | 666,444 | 1.37 times (before the two changes 1.28) |
+| `-P 16`, p99 | 6.82 ms | 2.13 ms | sediment was 3.66 ms before |
+| `-P 64`, per second | 780,415 | 914,713 | 1.17 times (before 0.95) |
+| `-P 64`, p99 | 11.29 ms | 10.65 ms | sediment was 11.53 ms before |
+
+- The p99 of Redis in this session (6.82 and 11.29 ms) is higher than in the session before
+  (3.60 and 7.99 ms), with the same version and the same settings, so the machine was in a
+  worse state. The comparison inside a session is fair, and the number of Redis alone is not
+  a constant.
+- The spread of sediment with `-P 64` is large, 761,000 to 1,000,000 (31%) against 761,000 to
+  800,000 (5%) for Redis, and in the worst round the two are equal (761,469 and 761,179).
+- This is the win of using many cores that the box "How to read the comparisons with Redis" says.
+  The CPU per command with one core was not measured again after the two changes.
+
