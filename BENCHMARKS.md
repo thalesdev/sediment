@@ -371,3 +371,46 @@ Two ceilings, measured before writing it (Apple M3 Pro, 11 cores).
   with `GOGC=100`, about 1,900 ns with `GOGC=400` and 1,763 to 1,895 ns with `GOGC=off`.
   The collector is about 19% of the time of a write. With 11 cores it runs on other cores
   and the wall time does not show it (1,521 to 1,668 ns against 1,448 to 1,667 ns).
+
+### The skiplist in blocks without pointers and without a lock
+
+The memtable is now a `skiplist.List`: the nodes are indexes in a `[]uint32`, the keys and
+the values are in a `[]byte`, both in blocks of 1 MiB that have no pointers, and an insert
+links a node with a compare and swap at each level. There is no `unsafe` and no lock.
+10 runs of each, `benchstat`, Apple M3 Pro, against the skiplist with a lock (commit
+`bbd0096`). The control, goleveldb, ran in the same two sessions.
+
+| Benchmark | with a lock | no lock, in blocks | |
+|---|---:|---:|---|
+| `SET` through the connection loop, one core | 2.455 us | 1.691 us | -31% |
+| `SET` through the connection loop, 11 cores | 1.661 us | 1.374 us | -17% |
+| `GET` from the memtable, through the connection loop | 780 ns | 665 ns | -15% |
+| `Seek`, one goroutine | 348 ns | 348 ns | same (p=0.47) |
+| `Seek`, 11 goroutines | 110 ns | 44.7 ns | -59% |
+| `Iterator.Next` | 14.4 ns | 10.3 ns | -29% |
+| `Insert`, one goroutine | 369 ns | 427 ns | +16% |
+| Allocations and bytes per `Insert` | 2 and 109 B | 0 and 66 B | |
+| `FillRandom` of the engine | 5.70 us | 5.36 us | -6% (goleveldb -2%) |
+| `FillRandomParallel` of the engine | 3.31 us | 3.09 us | -7% (goleveldb same) |
+
+How the two losses were found and fixed:
+
+- The first version made `Seek` 19% slower. A profile put 27% of the time in the decoding of a
+  node index, and an experiment showed the cause: each step did two atomic loads of a block
+  pointer. An atomic load cannot be moved past the loads after it, so the processor could not
+  overlap the memory latency of the steps. The tables of block pointers are written one time,
+  before the node that uses them is linked, and a reader reads a slot only after an atomic load
+  of a link that was stored after it, so they are now plain arrays. Taking out the bounds checks
+  alone gave 3%, and the plain tables gave the rest.
+- `Insert` is 16% slower with one goroutine. The profile puts 64% of it in the search, which
+  now costs the same as `Seek`, and about 10% in the new node, the copy of the key and the
+  value and the compare and swap operations. The `Insert` benchmark does not show the saving
+  of the garbage collector, and the engine does: the collector was about 19% of a write on one core.
+- The concurrent tests found one bug that the lock used to hide: `Seek` read the link of the
+  last node again after the loop, and an insert in between could give it a key smaller than the
+  one it looked for.
+- The write amplification of the engine fell from 3.54 to 2.93 and from 3.37 to 2.93. It is not
+  a gain of the skiplist: the old size estimate counted about 100 bytes of structure for each
+  node, the new one counts 24 to 40, so a memtable of 4 MiB holds more entries, the tables are
+  larger, and there are fewer compactions. The memory that a memtable really uses was not
+  measured, and it is not the same as before for the same limit.
