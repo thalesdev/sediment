@@ -414,3 +414,47 @@ How the two losses were found and fixed:
   node, the new one counts 24 to 40, so a memtable of 4 MiB holds more entries, the tables are
   larger, and there are fewer compactions. The memory that a memtable really uses was not
   measured, and it is not the same as before for the same limit.
+
+### The cache of data blocks
+
+`sstable.BlockCache` keeps the data blocks that `Find` reads: 16 parts with a lock each, a
+limit in bytes, the least recently used block dropped first, and the blocks of a table dropped
+when the engine removes the file. All the tables of a DB share one cache. `shale.Options.BlockCacheSize`
+is 8 MiB by default (as in LevelDB and goleveldb) and a negative value turns it off, and `sedimentd`
+has `block-cache-size`, 64 MiB by default. `INFO` shows `block_cache_hits`, `block_cache_misses` and
+`block_cache_bytes`.
+
+A `Find` with the source in memory (no system calls, so the CPU profile and the times do not depend
+on the operating system), `BenchmarkFind*` in `internal/sstable`:
+
+| `Find` | Time | Bytes |
+|---|---:|---:|
+| no cache | 906 to 930 ns | 304 |
+| a cache with 5% of the blocks, almost every read a miss | 916 to 919 ns | 890 |
+| a hit | 466 to 482 ns (-48%) | 309 |
+
+The first version of the cache made the miss 17% slower (1,090 ns and 5,168 bytes), because each
+miss allocated a block of 4 KiB and took the lock to add it, and the benchmark with a cache much
+smaller than the blocks in use showed it. A part of the cache that is full now adds one miss in
+eight, chosen at random, and reads the others into the pooled buffer. A part that has room adds
+every block, so a set of hot blocks that fits is in the cache at once.
+
+A `GET` that reaches a table, through the connection loop, 11 cores, 6 rounds alternating the build
+without the cache and the build with it in the same session (benchstat, goleveldb control 2.949 and
+2.945 us):
+
+| Workload | no cache | 8 MiB (default) | cache that holds everything |
+|---|---:|---:|---:|
+| 1,000,000 keys at random (130 MB, the cache has 6% of it) | 2.172 us | 2.265 us (+4%, noise) | 1.147 us (-47%) |
+| 1,000,000 keys at random, 50 connections | 783 ns | | 283 ns (-64%) |
+| **hot set of 50,000 keys** | 1.754 us | **856 ns (-51%)** | |
+| **hot set of 50,000 keys, 50 connections** | 891 ns | **284 ns (-68%)** | |
+| `ReadRandom` of the engine, 1,000,000 keys at random | 1.995 us | 1.984 us (same, p=0.70) | |
+
+- With the default cache a hot set is read twice as fast with one connection and three times
+  as fast with 50, which is the use of a service of flags.
+- A cache much smaller than the data with uniform reads costs nothing now (+4%, inside the noise),
+  and the path with the cache off did not change (2.142 and 2.172 us, p=0.07).
+- Not measured: the `GET` through the network with `redis-benchmark`, and the memory of a cache of
+  64 MiB in a server with many connections.
+

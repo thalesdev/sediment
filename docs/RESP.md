@@ -112,3 +112,5 @@ in gets the smaller pre-sign-in limits.
 | Time to take a reply | 30 s | |
 | TLS handshake | 10 s | |
 | Failed sign ins before the close | 5, each one waits longer | |
+| Cache of data blocks (`block-cache-size`) | 64 MiB | |
+| Memtable (`memtable-size`) | 64 MiB, at most 1 GiB | |
