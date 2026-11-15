@@ -515,7 +515,7 @@ the measure before the skiplist without a lock and the cache of blocks:
 | `SET`, `-P 64` | 1.00 | 2.50 | 3.33 | 368,799 | 35.9 ms | 11.6 ms |
 | `GET`, `-P 64` | 0.67 | 3.00 | 3.83 | 324,219 | 17.5 ms | 3.0 ms |
 | `SET`, no pipeline | 15.33 | 22.00 | 24.67 | 44,770 | 1.9 ms | 0.9 ms |
-| `GET`, no pipeline | 14.67 | 18.67 | 19.2 | 52,627 | 1.6 ms | 0.9 ms |
+| `GET`, no pipeline | 14.67 | 18.67 | 20.00 | 52,627 | 1.6 ms | 0.9 ms |
 
 - The CPU per command fell by 15% to 25% in every case, and the rate with one core rose by 12% to 27%.
   The gap to Redis is still 1.4 to 4.5 times in CPU per command, and it is largest for `GET` with a pipeline.
