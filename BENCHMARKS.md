@@ -498,3 +498,45 @@ cores), `SET` only. Medians of the rounds. The p99 is the seventh column of the 
 - This is the win of using many cores that the box "How to read the comparisons with Redis" says.
   The CPU per command with one core was not measured again after the two changes.
 
+### Per core and with all the cores, after the skiplist and the cache
+
+The same `bench5` as in the section "Per core", on commit `950a783`, 3 rounds, medians.
+`redis-benchmark`, 4 threads, 50 clients, 3,000,000 keys of 100 bytes. `us/cmd` is the CPU of the
+server per command. The p99 is the median of the lines of the rounds, because the p99 column
+of the summary of the script is wrong.
+
+CPU per command with one core (`GOMAXPROCS=1`), against Redis with one thread, and the change from
+the measure before the skiplist without a lock and the cache of blocks:
+
+| us per command | Redis | sediment, one core | before | rate of sediment | p99 of sediment | p99 of Redis |
+|---|---:|---:|---:|---:|---:|---:|
+| `SET`, `-P 16` | 1.83 | 3.83 | 4.50 | 252,429 | 33.0 ms | 6.2 ms |
+| `GET`, `-P 16` | 1.17 | 3.83 | 4.83 | 252,589 | 5.6 ms | 1.4 ms |
+| `SET`, `-P 64` | 1.00 | 2.50 | 3.33 | 368,799 | 35.9 ms | 11.6 ms |
+| `GET`, `-P 64` | 0.67 | 3.00 | 3.83 | 324,219 | 17.5 ms | 3.0 ms |
+| `SET`, no pipeline | 15.33 | 22.00 | 24.67 | 44,770 | 1.9 ms | 0.9 ms |
+| `GET`, no pipeline | 14.67 | 18.67 | 19.2 | 52,627 | 1.6 ms | 0.9 ms |
+
+- The CPU per command fell by 15% to 25% in every case, and the rate with one core rose by 12% to 27%.
+  The gap to Redis is still 1.4 to 4.5 times in CPU per command, and it is largest for `GET` with a pipeline.
+- With one core the p99 of a pipelined `SET` is 33 to 36 ms against 6 to 12 ms for Redis. The flush and the
+  compaction compete with the requests for the one core and have no priority over them. With all the cores the
+  p99 of `SET` with `-P 16` is 1.9 ms.
+
+Total rate with all the cores, against Redis with one thread and with `--io-threads 4`:
+
+| per second | sediment, all cores | Redis | ratio | Redis `io-threads 4` | ratio |
+|---|---:|---:|---:|---:|---:|
+| `SET`, no pipeline | 109,059 | 63,824 | 1.71 | 105,218 | 1.04 |
+| `GET`, no pipeline | 117,600 | 68,178 | 1.72 | 111,086 | 1.06 |
+| `SET`, `-P 16` | 705,716 | 499,708 | 1.41 | 999,666 | 0.71 |
+| `GET`, `-P 16` | 825,763 | 774,093 | 1.07 | 1,411,432 | 0.59 |
+| `SET`, `-P 64` | 922,793 | 799,573 | 1.15 | 1,043,115 | 0.88 |
+| `GET`, `-P 64` | 1,089,918 | 1,599,573 | 0.68 | 2,666,666 | 0.41 |
+
+- Against Redis with one thread sediment is ahead for `SET` at every depth and for everything without a pipeline.
+- Against Redis with `io-threads 4` it only ties without a pipeline (1.04 and 1.06). With a pipeline Redis is ahead
+  at every depth, with 2.3 to 2.9 busy cores against 3 to 9 for sediment.
+- `GET` with `-P 64` uses 8.7 cores and 8 us per command, almost all of it reads of cold blocks (3,000,000 keys,
+  cache of 64 MiB). It is the weakest case.
+
