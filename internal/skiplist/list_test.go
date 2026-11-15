@@ -51,7 +51,7 @@ func countLevel0(l *List) int {
 }
 
 func nodeHeight(l *List, n uint32) int {
-	return int(l.words[n>>chunkShift].Load()[n&chunkMask+4])
+	return int(l.words[n>>chunkShift][n&chunkMask+4])
 }
 
 func checkInvariants(t *testing.T, l *List) {

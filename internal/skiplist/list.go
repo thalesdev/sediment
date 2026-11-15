@@ -76,14 +76,19 @@ type List struct {
 	height atomic.Int32
 	size   atomic.Int64
 
+	// The tables of blocks are written one time per slot, under blockMu or before the
+	// node that uses the slot is linked, and they are read without an atomic load. A
+	// reader reads a slot only after it loaded, with an atomic load, a link that was
+	// stored after the slot, so it sees the pointer.
 	wordCursor atomic.Uint64
-	words      [maxBlocks]atomic.Pointer[wordBlock]
+	wordBlocks atomic.Uint32
+	words      [maxBlocks]*wordBlock
 
-	dataMu     sync.Mutex
+	blockMu    sync.Mutex
 	dataCursor atomic.Uint64
-	small      [maxBlocks]atomic.Pointer[dataBlock]
+	small      [maxBlocks]*dataBlock
 	largeCount atomic.Uint32
-	large      [maxLarge]atomic.Pointer[[]byte]
+	large      [maxLarge]*[]byte
 
 	blockLimit uint32
 }
@@ -96,17 +101,18 @@ func NewList(comp Comparator, seed uint64) *List {
 	l.rng.Store(seed)
 	l.height.Store(1)
 	l.wordCursor.Store(head)
+	l.wordBlocks.Store(0)
 	if idx, ok := l.allocWords(headerWords + maxHeight); !ok || idx != head {
 		panic("skiplist: cannot make the first node")
 	}
-	l.words[0].Load()[head+4] = maxHeight
-	l.small[0].Store(new(dataBlock))
+	l.words[0][head+4] = maxHeight
+	l.small[0] = new(dataBlock)
 	return l
 }
 
 // word returns the address of the word at index i. The block of i must exist.
 func (l *List) word(i uint32) *uint32 {
-	return &l.words[i>>chunkShift].Load()[i&chunkMask]
+	return &l.words[i>>chunkShift&(maxBlocks-1)][i&chunkMask]
 }
 
 // next returns the index of the node that follows n at level, or 0.
@@ -130,12 +136,23 @@ func (l *List) allocWords(n int) (uint32, bool) {
 		if !l.wordCursor.CompareAndSwap(cur, end) {
 			continue
 		}
-		b := start >> chunkShift
-		if l.words[b].Load() == nil {
-			l.words[b].CompareAndSwap(nil, new(wordBlock))
-		}
+		l.needWordBlock(uint32(start >> chunkShift))
 		return uint32(start), true
 	}
+}
+
+// needWordBlock makes sure that the blocks of nodes up to b exist. The blocks are made
+// in order and under a lock, and wordBlocks tells how many exist.
+func (l *List) needWordBlock(b uint32) {
+	if l.wordBlocks.Load() > b {
+		return
+	}
+	l.blockMu.Lock()
+	for n := l.wordBlocks.Load(); n <= b; n++ {
+		l.words[n] = new(wordBlock)
+		l.wordBlocks.Store(n + 1)
+	}
+	l.blockMu.Unlock()
 }
 
 // allocData reserves n bytes for a key and a value, and returns the block, which has
@@ -147,7 +164,7 @@ func (l *List) allocData(n int) (block, offset uint32, ok bool) {
 			return 0, 0, false
 		}
 		b := make([]byte, n)
-		l.large[i].Store(&b)
+		l.large[i] = &b
 		return largeFlag | i, 0, true
 	}
 	for {
@@ -159,41 +176,39 @@ func (l *List) allocData(n int) (block, offset uint32, ok bool) {
 			}
 			continue
 		}
-		l.dataMu.Lock()
+		l.blockMu.Lock()
 		if again := l.dataCursor.Load(); uint32(again>>32) == b {
 			if b+1 >= l.blockLimit {
-				l.dataMu.Unlock()
+				l.blockMu.Unlock()
 				return 0, 0, false
 			}
-			l.small[b+1].Store(new(dataBlock))
+			l.small[b+1] = new(dataBlock)
 			l.dataCursor.Store(uint64(b+1) << 32)
 		}
-		l.dataMu.Unlock()
+		l.blockMu.Unlock()
 	}
 }
 
 // bytes returns the n bytes at offset in block.
 func (l *List) bytes(block, offset, n uint32) []byte {
 	if block&largeFlag == 0 {
-		return l.small[block].Load()[offset : offset+n : offset+n]
+		return l.small[block&(maxBlocks-1)][offset : offset+n : offset+n]
 	}
-	return (*l.large[block&^largeFlag].Load())[offset : offset+n : offset+n]
+	return (*l.large[block&^largeFlag&(maxLarge-1)])[offset : offset+n : offset+n]
 }
 
 // key returns the key of node n. It is valid for as long as the list is, and the
 // caller must not change it.
 func (l *List) key(n uint32) []byte {
-	b := l.words[n>>chunkShift].Load()
-	i := n & chunkMask
-	return l.bytes(b[i], b[i+1], b[i+2])
+	h := (*[4]uint32)(l.words[n>>chunkShift&(maxBlocks-1)][n&chunkMask:])
+	return l.bytes(h[0], h[1], h[2])
 }
 
 // value returns the value of node n. It is valid for as long as the list is, and
 // the caller must not change it.
 func (l *List) value(n uint32) []byte {
-	b := l.words[n>>chunkShift].Load()
-	i := n & chunkMask
-	return l.bytes(b[i], b[i+1]+b[i+2], b[i+3])
+	h := (*[4]uint32)(l.words[n>>chunkShift&(maxBlocks-1)][n&chunkMask:])
+	return l.bytes(h[0], h[1]+h[2], h[3])
 }
 
 // randomHeight returns the height of a new node. A node is one level taller with a
@@ -224,7 +239,7 @@ func (l *List) newNode(key, value []byte, height int) (uint32, error) {
 	if !ok {
 		return 0, ErrFull
 	}
-	b := l.words[idx>>chunkShift].Load()
+	b := l.words[idx>>chunkShift]
 	i := idx & chunkMask
 	b[i], b[i+1], b[i+2], b[i+3], b[i+4] = block, offset, uint32(len(key)), uint32(len(value)), uint32(height)
 	l.size.Add(int64(n + 4*(headerWords+height)))
