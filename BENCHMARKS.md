@@ -213,7 +213,36 @@ What this says:
 - The profile used `-memprofilerate 1`, which adds some 5% to 8% of CPU to the
   numbers of the profile.
 
-Next steps, in this order, each with its before and after numbers: repeat the
-pipelined runs with more commands, then the block pool or cache for `GET` and its
-effect on the tail, and the pipeline batch only if the pipelined `SET` is still
-about half of Redis.
+### After the block pool and the 64 MiB memtable
+
+Changes: `sstable.Find` reads into a pooled buffer (ReadRandom of the engine, 2.50 to
+2.24 us, -10.3%, p=0.000, 10 runs with benchstat, goleveldb control unchanged), and
+the server takes a memtable of 64 MiB by default. 3,000,000 keys of 100 bytes, which
+is more than the memtable, so a `GET` reads tables. `redis-benchmark`, 4 threads, 50
+clients. "Before" is commit 7bbc283.
+
+| Workload | Redis | before | after |
+|---|---:|---:|---:|
+| `GET`, `-P 16`, per second | 749,906 | 631,446 | 824,969 |
+| `GET`, `-P 16`, p99 | 1.48 ms | 8.46 ms | 4.31 ms |
+| `SET`, `-P 16`, per second | 648,578 | 413,650 | 406,724 |
+| `SET`, `-P 16`, p99 | 1.97 ms | 9.38 ms | 4.98 ms |
+| `SET`, `-P 16`, median | 1.14 ms | 1.34 ms | 1.84 ms |
+| `GET`, no pipeline, per second | 66,664 | 127,421 | 124,938 |
+| `SET`, no pipeline, per second | 65,215 | 109,051 | 111,078 |
+| `SET`, no pipeline, p99 | 0.89 ms | 1.44 ms | 0.86 ms |
+
+- A pipelined `GET` is now faster than Redis, and its p99 is half of what it was.
+- Without a pipeline sediment does 1.7 to 1.9 times what Redis does, and the p99 of
+  `SET` is the same as Redis.
+- A pipelined `SET` did not get faster (63% of Redis), its p99 fell from 9.4 to 5.0
+  ms, and its median got worse.
+- The maximum latency has spikes of 20 to 70 ms in every version of sediment, and 7
+  ms in Redis at most. The cause is not known.
+- This comparison of `SET` favors Redis, because it ran with `--appendonly no` and
+  writes nothing to disk, while sediment writes each group to its log so that a
+  `kill -9` does not lose a write that returned. The fair setting for Redis is
+  `--appendonly yes --appendfsync no`.
+
+Next steps: the fair comparison of `SET`, and the batch of the commands of a
+pipeline only if the pipelined `SET` is still far from Redis.
