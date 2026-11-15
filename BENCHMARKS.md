@@ -244,5 +244,55 @@ clients. "Before" is commit 7bbc283.
   `kill -9` does not lose a write that returned. The fair setting for Redis is
   `--appendonly yes --appendfsync no`.
 
-Next steps: the fair comparison of `SET`, and the batch of the commands of a
-pipeline only if the pipelined `SET` is still far from Redis.
+### The pipelined SET: batch, lock convoy and shared locks
+
+The first comparison with Redis ran it with `--appendonly no`, which writes nothing.
+The fair setting is `--appendonly yes --appendfsync no`: Redis appends each command
+to a buffer and does one `write(2)` at the end of each turn of its event loop, and
+it replies before that write. sediment replies only after the record is in the log,
+so a write that returned survives `kill -9`.
+
+With that setting, a pipelined `SET` was 81% of Redis. The commands of one connection
+ran one at a time, and each waited for its own write to the log, because the group
+commit joins writes of different connections only. The server now runs the plain
+`SET` commands of a connection that already arrived whole as one write
+(`command.SetMany`), and answers in the same order.
+
+The first version of the batch was slower at the tail. The median fell (1.8 to 0.5
+ms) and the p99 rose (4.7 to 26 ms): some connections ran and others waited. A block
+profile of the two versions showed why:
+
+| | before the batch | batch, exclusive locks |
+|---|---:|---:|
+| Wait in `Mutex.Lock` of the stripe locks | 37.8 s (9% of the blocked time) | 333 s (74.5%) |
+| Wait in the group commit (`Cond.Wait`) | 290 s | 53 s |
+| CPU used in 30 s | 90% | 66% |
+
+The batch held up to 64 of the 256 stripe locks while it waited for the log, and the
+clients waited for each other. The stripes are now read-write locks. `SET` and `MSET`
+take the shared side, so they do not wait for each other and still share the group
+commit. `SET NX/XX/GET` and `DEL` take the exclusive side, which waits for the shared
+holders and keeps them out, so they stay atomic.
+
+`SET` only, 3,000,000 keys of 100 bytes, `redis-benchmark` with 4 threads and 50
+clients, two rounds. Redis with `--appendonly yes --appendfsync no`.
+
+| Workload | Redis | no batch | batch, exclusive locks | batch, shared locks |
+|---|---:|---:|---:|---:|
+| `-P 16`, per second | 499,792 and 479,885 | 428,541 and 399,947 | 393,365 and 363,570 | **648,438 and 615,195** |
+| `-P 16`, p99 | 3.50 and 3.79 ms | 4.48 and 4.82 ms | 24.9 and 26.8 ms | 3.50 and 3.74 ms |
+| `-P 64`, per second | 799,467 and 773,694 | 428,449 and 420,875 | 545,058 and 521,467 | **798,722 and 705,633** |
+| `-P 64`, p99 | 8.46 and 10.26 ms | 15.4 and 15.9 ms | 35.6 and 35.2 ms | 9.94 and 11.0 ms |
+| no pipeline, per second | 61,851 and 61,851 | 115,349 and 105,234 | 113,156 and 107,089 | 109,051 and 109,051 |
+
+- With `-P 16` sediment does 1.28 to 1.30 times what Redis does, and the p99 is the
+  same.
+- With `-P 64` it does 1.00 and 0.91 times. Two rounds are too few for a median here,
+  and the spread of sediment (12%) is larger than the spread of Redis (3%).
+- Without a pipeline the batch changes nothing, and sediment does 1.7 to 1.9 times
+  Redis.
+- Redis runs commands on one thread and sediment on many, and this is one machine, one
+  value size and `SET` only. Redis was not run with `io-threads`.
+
+Next steps: a median of at least 8 rounds with `GET`, a mixed load and Redis with
+`io-threads 4`, and a profile of what varies in `-P 64`.

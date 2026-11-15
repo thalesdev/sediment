@@ -9,6 +9,16 @@ A connection starts in RESP2, as in Redis. `HELLO 3` switches it to RESP3 and
 `HELLO 2` switches it back. One parser reads both, and the writer picks the bytes
 for the version of the connection. The commands do not know the version.
 
+## Pipelining
+
+The client decides. A pipeline is only a client that writes many commands and reads
+the replies after, which come back in the same order. The server needs no option. If
+the commands of a connection are already in its buffer, a run of plain `SET key value`
+commands is written to the log as one record, and a command that is not a plain `SET`
+ends the run. A client that sends one command and waits for its reply, which is the
+usual way, gets no batch and loses nothing. To use the full speed of the server for
+many writes, use the pipeline of the client library.
+
 ## Types
 
 | Type | Prefix | Read | Write in RESP3 | Write in RESP2 |
