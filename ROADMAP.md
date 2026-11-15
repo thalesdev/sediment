@@ -2,7 +2,9 @@
 
 sediment is a key-value database that speaks the Redis protocol (RESP), built on **Shale**, an LSM storage engine written from scratch in Go.
 
-**Finish line:** `redis-cli` connects and runs `GET`, `SET` and `DEL`, `redis-benchmark` runs against the server, and no acknowledged write is lost after a `kill -9`.
+**Finish line (reached):** `redis-cli` connects and runs `GET`, `SET` and `DEL`, `redis-benchmark` runs against the server, and no acknowledged write is lost after a `kill -9`.
+
+**Target:** v1.0, a replicated, secure, Redis compatible database for strings, hashes and sets. The path is in [Path to v1.0](#path-to-v10).
 
 ## Done
 
@@ -58,38 +60,60 @@ Measured or discussed, and not to be proposed again without a new reason.
 - **Plain SHA-256 password hashes** (the `#hash` of the Redis ACL file): cheap to guess from, so the file is refused.
 - **Key patterns that are read and not enforced**: the ACL file is refused until they are enforced (ACL phase 2).
 - **`unsafe`**, anywhere.
+- **CRDTs and active-active multi-region.** Replication is Raft, in one region. Raft keeps one order of writes, which the atomic commands (`INCR`, `SETNX`, `GETDEL`) need.
+- **A formal proof before the release candidates.** The TLA+ model is the last item of the project.
 - **Using the comparison with Redis as the goal.** It is a ruler, and the numbers are kept, but the work is chosen by what the server needs. The CPU per command with one core is still 1.4 to 4.5 times that of Redis, and a user who needs the data set larger than memory or the durability is not helped by closing that gap.
 
-## Next
+## Path to v1.0
 
-Nothing is started. The candidates, by what each one unlocks:
-- **A formal model of Shale in TLA+.** It was planned as the first item after the finish line, and the last changes (memtable, flush, block cache, order of reads) touched the parts that it covers.
-- **ACL phase 2**, which is the debt of the first phase of the security work.
+v1.0 is milestones 1 to 4. Each milestone ends with `make full` green and the docs updated. The order is the order of the work, except that milestones 1 and 2 can run together.
 
-## Backlog
+### Milestone 1: a complete single node
+- [ ] **Key encoding.** One layout for the type, the hash slot and the user key, decided before the first new data type. The key layout is frozen at v1.0, so the slot prefix of cluster mode is part of it even though cluster mode comes later.
+- [ ] **Hashes**: `HSET`, `HGET`, `HDEL`, `HEXISTS`, `HLEN`, `HGETALL`, `HKEYS`, `HVALS`, `HMGET`, `HSETNX`, `HINCRBY`, `HSCAN`. A hash is a range of keys, read with an iterator.
+- [ ] **Sets**: `SADD`, `SREM`, `SISMEMBER`, `SMEMBERS`, `SCARD`, `SSCAN`, `SUNION`, `SINTER`, `SDIFF`.
+- [ ] **Transactions**: `MULTI`, `EXEC`, `DISCARD`, `WATCH`.
+- [ ] **The rest of the string and key commands**: `SETEX`, `PSETEX`, `MSETNX`, `GETEX`, `GETRANGE`, `SETRANGE`, `INCRBYFLOAT`, `UNLINK`, `RENAME`.
+- [ ] **Backup**: a consistent copy of a running database, built on snapshots, and the way to restore it.
 
-Each item has the reason it would be picked up.
+### Milestone 2: safe to run
+- [ ] **ACL phase 2**: key patterns (`~prefix:*`, `%R~`, `%W~`), `ACL SETUSER`, `DELUSER`, `SAVE`, `GETUSER`, `LOG`, selectors, rules for subcommands, user from the CN of a client certificate.
+- [ ] **Sign in protection**: a rate limit of attempts per address, and a log of denied commands.
+- [ ] **Operator commands**: `CLIENT LIST`, `CLIENT KILL`, `SLOWLOG`.
+- [ ] **Measures on Linux**, with a container of one CPU (the scripts use the `ps` of macOS), before any number is said for a real deployment.
+- [ ] **Packaging**: a container image, release builds for Linux and macOS, and a quickstart of one command in the README.
 
-| Item | When |
-|---|---|
-| Formal model of Shale in TLA+ (WAL, flush, MANIFEST, compaction, reference counting, `Get` ordering), checked across every interleaving and crash point | the first of the candidates in "Next" |
-| Snapshots that live across commands (for `MULTI`, `EXEC`, `WATCH`): they need a registry of the oldest live snapshot, so that a compaction keeps the versions that one can see | when a command needs a view that lasts more than one command |
-| Reverse iteration and `SeekToLast` | when a command needs the last key |
-| ACL phase 2: key patterns (`~prefix:*`, `%R~`, `%W~`), `ACL SETUSER`, `DELUSER`, `SAVE`, `LOG`, selectors, rules for subcommands, user from the CN of a client certificate | when a deployment needs more than one kind of client on the same data |
-| Rate limit of sign in attempts per address, and a log of denied commands | before the server is exposed to untrusted networks |
-| `CLIENT LIST`, `CLIENT KILL`, slow log | when an operator needs to see and cut clients |
-| RESP3 attributes and streamed strings | only if a client needs them |
-| A second, native protocol next to RESP | only with a concrete need RESP cannot express |
-| RESP over QUIC, compared with TCP | experiment |
-| Leveled compaction, compared with size-tiered | experiment, if write amplification (about 2.9) or space matters |
-| Incremental compaction (free inputs piece by piece instead of needing up to 2x disk) | if large merges become a disk space problem |
-| Delete obsolete files outside the `Get` path (a queue drained by the compactor) | if a measure ties a latency spike to the removal of a file |
-| Reuse the blocks of a memtable after its flush, and measure the memory that a memtable really uses | if the memory of the server matters |
-| A cache of the index blocks and of the parsed blocks (a hit of the block cache still costs about 470 ns, most of it in the block iterator) | if a workload of hot reads needs it, or a better policy than "one miss in eight" for a cache that is full |
-| Less CPU in the write path of the engine (the flush and the compaction are about 20% of the CPU of a `SET`, and the log about as much), and key-value separation for large values | when the throughput of writes or the write amplification matters |
-| Explain the 1.3 to 1.6 us per command between the benchmark without the network and the real run (the guess is a cold CPU cache, not tested) | when the CPU per command matters again |
-| A `MultiGet` in Shale (one read state and one sequence number for many keys), for pipelined `GET` and `MGET` | if a profile of pipelined `GET` shows that cost |
-| OpenTelemetry at request level in the server, sampled | if the server needs distributed tracing |
-| Snappy compression | if disk usage matters more than CPU |
-| A generator of load for the cases that `redis-benchmark` cannot do (a data set larger than the memory of Redis with `maxmemory`, keys of many sizes with common prefixes, large values and their write amplification, constant overwrites and deletes) | when we compare with Redis again, or when a user has one of those cases |
-| The same measures on Linux (the scripts use the `ps` of macOS), with a container of one CPU, and `perf` or the CPU profile of Go, which is reliable there | before we say a number for a real deployment, and to decide if `io_uring` is worth it |
+### Milestone 3: replication with Raft
+- [ ] **One Raft group** of 3 or 5 nodes in one region. The leader takes the writes, the Raft log is separate from the WAL of Shale, Shale is the state machine, and a write returns after a majority has it.
+- [ ] **Commands as entries of the log.** The read-modify-write commands (`INCR`, `SETNX`, `GETSET`, `GETDEL`, `APPEND`, `SET NX` and `XX`, `EXPIRE`) run in the apply step, in the order of the log, and not under a lock before the proposal. The leader stamps the deadline of a key, so every node sees the same one.
+- [ ] **Snapshot transfer** to a new node or a late one, with the snapshots and the iterators of Shale.
+- [ ] **Reads**: linearizable through the leader with a lease, and an explicit way to read from a follower that may be stale.
+- [ ] **Membership**: add and remove a node, move the leader, TLS and mTLS between the nodes.
+- [ ] **Failure tests**: a partition, `kill -9` of the leader, a full disk, a jump of the clock.
+
+### Milestone 4: release candidates
+- [ ] **Formats frozen**: WAL, SSTable, MANIFEST, the key layout and the Raft log, with the rule for an upgrade between versions.
+- [ ] **Public Go API** of Shale, out of `internal`.
+- [ ] **A review of the security** of the server layer and the nodes.
+- [ ] **A long test**: days of load with kills and partitions, with no lost write and no wrong read.
+- [ ] **RC1, RC2 and so on**, until one has no open bug. Then v1.0.
+
+## After v1.0
+
+In this order.
+1. **Cluster mode**, for data that does not fit in one group: 16384 hash slots with hash tags, `CLUSTER SLOTS` and `CLUSTER SHARDS`, `MOVED` and `ASK`, one Raft group for each range of slots. A slot is one range of keys because of the key layout of milestone 1, so a slot moves with a range iterator and without a full scan. A command with keys in two slots is a `CROSSSLOT` error.
+2. **More data types**: lists, sorted sets, `PUBLISH` and `SUBSCRIBE`, streams, each one on the key layout of milestone 1.
+3. **A formal model in TLA+** of Shale (WAL, flush, MANIFEST, compaction, reference counting, `Get` ordering) and of the replication, checked across every interleaving and crash point. It is the last item of the project.
+
+## Engine experiments
+
+None of these is promised for v1.0. Each one starts with a measurement, and is dropped if the number does not pay for it.
+
+- **Compaction**: leveled compared with size-tiered (write amplification is about 2.9), and incremental compaction, which frees the inputs piece by piece instead of needing up to 2x of disk.
+- **Reads**: a `MultiGet` in Shale for pipelined `GET` and `MGET`, a cache of the index blocks and of the parsed blocks (a hit of the block cache still costs about 470 ns, most of it in the block iterator), and a better policy than "one miss in eight" for a cache that is full.
+- **Writes**: less CPU in the write path (the flush and the compaction are about 20% of the CPU of a `SET`, and the log about as much), and key-value separation for large values.
+- **Files and memory**: delete obsolete files outside the `Get` path, reuse the blocks of a memtable after its flush and measure the memory that a memtable really uses, and Snappy compression.
+- **Iteration**: reverse iteration and `SeekToLast`, and snapshots that live across commands (they need a registry of the oldest live snapshot, so that a compaction keeps the versions that one can see).
+- **Protocol**: RESP3 attributes and streamed strings, a second native protocol next to RESP, RESP over QUIC compared with TCP.
+- **Observability and tools**: OpenTelemetry at request level, sampled, and a generator of load for the cases that `redis-benchmark` cannot do (a data set larger than the memory of Redis with `maxmemory`, keys of many sizes with common prefixes, large values, constant overwrites and deletes).
+- **The CPU per command**: explain the 1.3 to 1.6 us between the benchmark without the network and the real run (the guess is a cold CPU cache, not tested).

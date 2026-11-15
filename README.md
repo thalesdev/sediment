@@ -203,8 +203,9 @@ change it).
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md): what is done, what was decided against, the candidates
-for what comes next, and a backlog where each item has the reason it would be picked up.
+See [ROADMAP.md](ROADMAP.md): what is done, what was decided against, the path to v1.0
+(a complete single node, safe operation, replication with Raft, release candidates),
+and what comes after it.
 
 ## License
 
