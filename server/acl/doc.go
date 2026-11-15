@@ -5,7 +5,7 @@
 // Redis ACL file, for example:
 //
 //	user default off
-//	user app on #<sha256> ~* +@read +@write -@dangerous
+//	user app on $pbkdf2-sha256$... ~* +@read +@write -@dangerous
 //	user admin on $pbkdf2-sha256$... ~* +@all
 //
 // The package is made to fail closed. A rule that it does not enforce yet, such

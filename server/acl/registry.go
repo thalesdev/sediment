@@ -101,12 +101,6 @@ func Parse(in io.Reader, o ParseOptions) (map[string]*User, []string, error) {
 				warnings = append(warnings, fmt.Sprintf("line %d: user %q has a plain password in the file, replace it with its hash", n, printable(name)))
 			}
 		}
-		for _, p := range u.passwords {
-			if p.legacy {
-				warnings = append(warnings, fmt.Sprintf("line %d: user %q has a SHA-256 password hash, which is weak against guessing, use a $pbkdf2-sha256$ hash", n, printable(name)))
-				break
-			}
-		}
 		users[name] = u
 	}
 	if err := sc.Err(); err != nil {

@@ -82,7 +82,8 @@ The users are in a file with the line format of the Redis ACL file.
 | Feature | State |
 |---|---|
 | `on`, `off`, `nopass`, `resetpass`, `reset` | [x] |
-| Password as `>plain` (hashed when loaded, with a warning), `$pbkdf2-sha256$...`, `#sha256` (with a warning) | [x] |
+| Password as `>plain` (hashed when loaded, with a warning) or `$pbkdf2-sha256$...` | [x] |
+| Password as a plain SHA-256 (`#hash`, as in the Redis file) | [ ] The file is refused: it is cheap to guess from. |
 | `sedimentd hash-password` makes the `$pbkdf2-sha256$` hash from a password on standard input | [x] |
 | `+@category`, `-@category`, `+command`, `-command`, `allcommands`, `nocommands` | [x] |
 | `~*` and `allkeys` | [x] |

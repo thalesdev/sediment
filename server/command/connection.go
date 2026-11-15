@@ -122,10 +122,14 @@ func hello(env *Env, c *Client, args [][]byte) resp.Value {
 		if !ok {
 			return resp.Error("ERR Protocol version is not an integer or out of range")
 		}
-		if n != 2 && n != 3 {
+		switch n {
+		case 2:
+			proto = 2
+		case 3:
+			proto = 3
+		default:
 			return resp.Error("NOPROTO sorry, this protocol version is not supported")
 		}
-		proto = int(n)
 		i = 2
 	}
 	var user string

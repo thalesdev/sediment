@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"runtime"
 	"strconv"
@@ -40,7 +39,6 @@ var slots = make(chan struct{}, max(1, runtime.GOMAXPROCS(0)))
 
 // password is the stored form of one password of a user.
 type password struct {
-	legacy     bool
 	iterations int
 	salt       []byte
 	sum        []byte
@@ -63,15 +61,14 @@ func HashPassword(pw []byte) (string, error) {
 	return p.String(), nil
 }
 
-// parsePassword reads a stored password. The text is a PBKDF2 hash or, to import
-// a Redis file, a SHA-256 in hexadecimal that starts with #.
+// errWeakHash is the error for a password hash that is a plain SHA-256, which the Redis ACL
+// file uses. It costs nothing to guess from, so the server does not accept it.
+var errWeakHash = errors.New("a SHA-256 password hash is not accepted because it is cheap to guess from, make a PBKDF2 hash with: sedimentd hash-password")
+
+// parsePassword reads a stored password, which is a PBKDF2 hash as HashPassword makes it.
 func parsePassword(text string) (password, error) {
 	if strings.HasPrefix(text, "#") {
-		sum, err := hex.DecodeString(text[1:])
-		if err != nil || len(sum) != sha256.Size {
-			return password{}, errors.New("a # password must be a SHA-256 in 64 hexadecimal digits")
-		}
-		return password{legacy: true, sum: sum}, nil
+		return password{}, errWeakHash
 	}
 	if !strings.HasPrefix(text, pbkdf2Prefix) {
 		return password{}, errors.New("unknown password hash")
@@ -94,9 +91,6 @@ func parsePassword(text string) (password, error) {
 
 // String returns the text of the stored password.
 func (p password) String() string {
-	if p.legacy {
-		return "#" + hex.EncodeToString(p.sum)
-	}
 	return pbkdf2Prefix + "i=" + strconv.Itoa(p.iterations) + "$" +
 		base64.RawStdEncoding.EncodeToString(p.salt) + "$" + base64.RawStdEncoding.EncodeToString(p.sum)
 }
@@ -110,10 +104,6 @@ func (p password) derive(pw []byte) ([]byte, error) {
 
 // verify reports whether pw is the password. It compares in constant time.
 func (p password) verify(pw []byte) bool {
-	if p.legacy {
-		sum := sha256.Sum256(pw)
-		return subtle.ConstantTimeCompare(sum[:], p.sum) == 1
-	}
 	sum, err := p.derive(pw)
 	if err != nil {
 		return false

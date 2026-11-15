@@ -52,14 +52,11 @@ func TestPassword(t *testing.T) {
 		}
 	})
 
-	t.Run("Should read a Redis SHA-256 hash", func(t *testing.T) {
+	t.Run("Should refuse a Redis SHA-256 hash and say how to make a good one", func(t *testing.T) {
 		sum := sha256.Sum256([]byte("old"))
-		p, err := parsePassword("#" + hex.EncodeToString(sum[:]))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !p.verify([]byte("old")) || p.verify([]byte("new")) {
-			t.Fatal("verify is wrong")
+		_, err := parsePassword("#" + hex.EncodeToString(sum[:]))
+		if err == nil || !strings.Contains(err.Error(), "sedimentd hash-password") {
+			t.Fatalf("got %v", err)
 		}
 	})
 
@@ -135,11 +132,11 @@ func TestParse(t *testing.T) {
 		}
 	})
 
-	t.Run("Should warn about a SHA-256 hash", func(t *testing.T) {
+	t.Run("Should refuse a user with a SHA-256 hash", func(t *testing.T) {
 		sum := sha256.Sum256([]byte("old"))
-		_, warnings, err := parse(t, "user u on #"+hex.EncodeToString(sum[:])+" +@all\n")
-		if err != nil || len(warnings) != 1 || !strings.Contains(warnings[0], "weak") {
-			t.Fatalf("err %v, warnings %v", err, warnings)
+		_, _, err := parse(t, "user u on #"+hex.EncodeToString(sum[:])+" +@all\n")
+		if err == nil || !strings.Contains(err.Error(), "line 1") || !strings.Contains(err.Error(), "sedimentd hash-password") {
+			t.Fatalf("got %v", err)
 		}
 	})
 
