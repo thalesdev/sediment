@@ -76,10 +76,17 @@ v1.0 is milestones 1 to 4. Each milestone ends with `make full` green and the do
 - [ ] **The rest of the string and key commands**: `SETEX`, `PSETEX`, `MSETNX`, `GETEX`, `GETRANGE`, `SETRANGE`, `INCRBYFLOAT`, `UNLINK`, `RENAME`.
 - [ ] **Backup**: a consistent copy of a running database, built on snapshots, and the way to restore it.
 
-### Milestone 2: safe to run
+### Milestone 2: safe to run, and visible from the inside
 - [ ] **ACL phase 2**: key patterns (`~prefix:*`, `%R~`, `%W~`), `ACL SETUSER`, `DELUSER`, `SAVE`, `GETUSER`, `LOG`, selectors, rules for subcommands, user from the CN of a client certificate.
-- [ ] **Sign in protection**: a rate limit of attempts per address, and a log of denied commands.
+- [ ] **Sign in protection**: a rate limit of attempts per address.
 - [ ] **Operator commands**: `CLIENT LIST`, `CLIENT KILL`, `SLOWLOG`.
+- [ ] **Logging**, as structured `slog`, with a `log-format` of text or JSON and a level that `SIGHUP` reloads.
+  - The engine has no logger today. Give `shale.Options` a `Logger` and log the flush and the compaction (start, end, bytes, time), the stalls of the writes, what recovery replayed or cut, and a file that could not be removed.
+  - The server logs the failed sign ins and the denied commands (user, address, command, never the key, the value or the password), the commands slower than a limit, and the connections that close with an error. The opening and closing of a connection is at debug level.
+  - A line of a request carries the trace id, so a log and a trace meet.
+- [ ] **Metrics** in OpenTelemetry format (OTLP), and a Prometheus endpoint, with what `INFO` shows today: commands by name and result, latency, clients, the waits of the writes, the flush, the compaction, the block cache, and the Go runtime.
+- [ ] **Tracing with OpenTelemetry.** A span for each command with the name, the number of keys (never a key), the result and the size of the reply, sampled by a rate in the settings. The flush and the compaction are spans of their own. Only the OpenTelemetry API is imported by the engine and the server, and `sedimentd` links the SDK, so a library user pays nothing. The context goes in the entries of the Raft log in milestone 3, so a write is one trace across the nodes.
+- [ ] **Health**: a liveness and a readiness endpoint for an orchestrator. In milestone 3 ready means that the node knows a leader. The endpoint listens on `127.0.0.1` by default, and takes TLS and a sign in when it is opened to a network.
 - [ ] **Measures on Linux**, with a container of one CPU (the scripts use the `ps` of macOS), before any number is said for a real deployment.
 - [ ] **Packaging**: a container image, release builds for Linux and macOS, and a quickstart of one command in the README.
 
@@ -115,5 +122,5 @@ None of these is promised for v1.0. Each one starts with a measurement, and is d
 - **Files and memory**: delete obsolete files outside the `Get` path, reuse the blocks of a memtable after its flush and measure the memory that a memtable really uses, and Snappy compression.
 - **Iteration**: reverse iteration and `SeekToLast`, and snapshots that live across commands (they need a registry of the oldest live snapshot, so that a compaction keeps the versions that one can see).
 - **Protocol**: RESP3 attributes and streamed strings, a second native protocol next to RESP, RESP over QUIC compared with TCP.
-- **Observability and tools**: OpenTelemetry at request level, sampled, and a generator of load for the cases that `redis-benchmark` cannot do (a data set larger than the memory of Redis with `maxmemory`, keys of many sizes with common prefixes, large values, constant overwrites and deletes).
+- **Tools**: a generator of load for the cases that `redis-benchmark` cannot do (a data set larger than the memory of Redis with `maxmemory`, keys of many sizes with common prefixes, large values, constant overwrites and deletes).
 - **The CPU per command**: explain the 1.3 to 1.6 us between the benchmark without the network and the real run (the guess is a cold CPU cache, not tested).
