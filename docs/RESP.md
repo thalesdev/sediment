@@ -77,9 +77,10 @@ closes the connection, so that a web page cannot talk to the server.
 | `DBSIZE` | [x] | Slow: it counts the live keys, so it reads all of them. |
 | `RANDOMKEY` | [x] | The first live key after a random point, so a key after a large gap is more likely. |
 | `TYPE` | [x] | `string` or `none`. |
-| `MULTI`, `EXEC`, `WATCH` | [ ] | Need snapshots that live across commands. A snapshot pins the table files, so the server does not hold one between commands. |
+| `MULTI`, `EXEC`, `DISCARD`, `WATCH` | [ ] | Milestone 1 of the [roadmap](../ROADMAP.md). |
 | `SUBSCRIBE`, `PUBLISH` | [ ] | |
-| Lists, hashes, sets, sorted sets, streams | [ ] | Not planned for now. |
+| Hashes and sets | [ ] | Milestone 1 of the [roadmap](../ROADMAP.md). |
+| Lists, sorted sets, streams, `PUBLISH` and `SUBSCRIBE` | [ ] | After v1.0. |
 | `EVAL`, `FUNCTION`, `MODULE`, `DEBUG`, `REPLICAOF`, `SLAVEOF` | never | The source of most Redis CVEs. |
 
 ## ACL
