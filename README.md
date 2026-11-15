@@ -24,9 +24,9 @@ the logo is what you find when you dig.
 
 ## Status
 
-The storage engine and a first RESP server are done. The server has not been run
-with `redis-cli` or `redis-benchmark` yet, only with its own tests and the go-redis
-client.
+The storage engine and a first RESP server are done. `redis-cli` and
+`redis-benchmark` run against the server, and a write that had returned survives a
+`kill -9`. The server has not been optimized yet.
 
 | Part | State |
 |---|---|

@@ -33,13 +33,15 @@ sediment is a key-value database that speaks the Redis protocol (RESP), built on
 - [x] **Pipelining**, with a flush only when the reader would block.
 - [x] **Per-connection panic recovery**, one goroutine per connection.
 - [x] **Security**: TLS 1.3 and mTLS, users from an ACL file (PBKDF2 passwords, command and category rules, fail closed), tighter limits before sign in, slow down after failed sign ins, safe bind by default, HTTP cross-protocol guard. See [SECURITY.md](SECURITY.md).
-- [x] **Benchmarks** with and without pipelining (`make bench-server`).
+- [x] **Benchmarks** with and without pipelining (`make bench-server`, and `redis-benchmark`).
+- [x] **Finish line**: `redis-cli` runs `GET`, `SET` and `DEL`, `redis-benchmark` runs against the server, and a write that had returned was there after a `kill -9`.
 
 ## Next
 
-### 8. Finish line
-- [ ] Run the real `redis-cli` and `redis-benchmark` against `sedimentd` (they were not installed where the server was built, so it was checked with go-redis and raw clients only).
-- [ ] A kill -9 test with `redis-benchmark` writing, then a reopen.
+### 8. Server performance
+- [ ] Profile the server without a pipeline: 0.5 ms per command with 50 clients is slow for loopback, and the cause is not known.
+- [ ] Block pool or block cache for `GET` (about 4.9 KiB per command), after the profile confirms it.
+- [ ] Run the consecutive `SET` commands of a pipeline as one batch, only if the profile shows the waits for the log.
 
 ## Backlog
 

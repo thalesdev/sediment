@@ -126,8 +126,7 @@ values of 100 bytes. The server runs with `Sync` off, so a `SET` does not wait f
 wall time per command across all the connections. The client and the server
 compete for the same CPU, so each number measures both, and the real cost of the
 server alone is lower. These numbers are a first measure, not a comparison.
-`redis-benchmark`, which runs in its own process, was not available when they were
-taken, and it is the measure that counts.
+The measure that counts is the one below, with `redis-benchmark` in its own process.
 
 | Workload | ns/op | Commands per second | Allocations per command |
 |---|---:|---:|---:|
@@ -151,6 +150,30 @@ different connections. This was not measured. If it is the cause, the server cou
 run the consecutive `SET` commands that already arrived on a connection as one
 batch and reply in the same order.
 
-Next steps, in this order, each with its before and after numbers: run
-`redis-benchmark` (`-t get,set -n 1000000 -r 100000 -d 100 -q`, with and without
-`-P 16`), profile the server, and only then the block pool and the pipeline batch.
+### With `redis-benchmark`
+
+`redis-benchmark` 8.10.3 in its own process, `-t get,set -n 1000000 -r 100000 -d 100`
+(50 clients, values of 100 bytes, 100,000 keys), `Sync` off, same machine, on power
+and not in low power mode. Latency is in milliseconds.
+
+| Workload | Commands per second | avg | p50 | p95 | p99 | max |
+|---|---:|---:|---:|---:|---:|---:|
+| `SET` | 46,926 | 0.578 | 0.551 | 0.775 | 1.087 | 10.0 |
+| `GET` | 52,502 | 0.508 | 0.495 | 0.711 | 0.823 | 23.3 |
+| `SET`, `-P 16` | 413,223 | 1.903 | 1.263 | 7.431 | 9.607 | 10.9 |
+| `GET`, `-P 16` | 678,426 | 0.972 | 0.639 | 2.687 | 4.575 | 13.2 |
+
+With the client in another process, the pipelined `SET` doubles (209,000 to 413,000)
+and the gap to `GET` shrinks from 2.6 times to 1.6, so the shared CPU was a large part
+of the first result, and the guess about one write at a time per connection matters
+less than it looked. Without a pipeline the server does about 50,000 commands per
+second, which is 0.5 ms per command for each of 50 clients. That is slow for loopback
+and the cause is not known, so it is the first thing to profile. The p99 of the
+pipelined runs is 4.6 and 9.6 ms, which is queueing behind 16 commands of 50 clients.
+
+The same run did `SET`, `GET`, `DEL`, `MSET`, `MGET` and `HELLO 3` with `redis-cli`
+8.10.3, wrote 200,000 keys with `redis-benchmark`, killed the server with `kill -9`
+and read a key written just before the kill after the restart.
+
+Next steps, in this order, each with its before and after numbers: profile the
+server without a pipeline, and only then the block pool and the pipeline batch.
