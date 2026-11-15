@@ -112,6 +112,38 @@ func TestBlockCache(t *testing.T) {
 		}
 	})
 
+	t.Run("Should add every block while it has room and some when it is full", func(t *testing.T) {
+		c := NewBlockCache(cacheShards * 40 * (4096 + entryOverhead))
+		for i := range uint64(100000) {
+			if _, hit, _ := c.lookup(1, i*4096, 4096); hit {
+				t.Fatal("hit on a block that was never put")
+			}
+		}
+		admitted := 0
+		for i := range uint64(100000) {
+			_, _, admit := c.lookup(1, i*4096, 4096)
+			if admit {
+				c.put(1, i*4096, blockOf(4096, 1))
+				admitted++
+			}
+		}
+		if admitted < 40*cacheShards {
+			t.Fatalf("only %d blocks were admitted while the cache had room", admitted)
+		}
+		full := 0
+		for i := range uint64(100000) {
+			if _, _, admit := c.lookup(2, i*4096, 4096); admit {
+				full++
+			}
+		}
+		if want := 100000 / (admitMask + 1); full < want/2 || full > want*2 {
+			t.Fatalf("a full cache admitted %d of 100000 misses, want about %d", full, want)
+		}
+		if _, _, admit := c.lookup(3, 0, 1<<20); admit {
+			t.Fatal("admitted a block that is larger than a part of the cache")
+		}
+	})
+
 	t.Run("Should drop every block of a table and only those", func(t *testing.T) {
 		c := NewBlockCache(1 << 22)
 		for i := range uint64(200) {

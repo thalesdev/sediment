@@ -2,13 +2,27 @@
 
 package sstable
 
-import "sync"
+import (
+	"math/rand/v2"
+	"sync"
+)
 
 const (
 	// cacheShards is the number of parts of a BlockCache. Each part has its own lock
 	// and its own list, so readers of different blocks rarely wait for each other. It
 	// must be a power of 2.
 	cacheShards = 16
+
+	// admitMask sets how many of the blocks that a full part of the cache does not hold
+	// are added to it: one in admitMask+1. A block that is used often is added after
+	// a few reads, and a cache that is much smaller than the blocks that the reads use
+	// does not spend its time on blocks that it drops before they are read again.
+	admitMask = 7
+
+	// fullNumerator and fullDenominator tell when a part of the cache is full for the
+	// rule above: when it holds more than 7 eighths of its capacity.
+	fullNumerator   = 7
+	fullDenominator = 8
 
 	// entryOverhead is the number of bytes that an entry costs besides its block: the
 	// entry, its place in the map and its links in the list.
@@ -114,8 +128,17 @@ func NewBlockCache(capacity int) *BlockCache {
 
 // get returns the block at offset of the table, and moves it to the front of its list.
 func (c *BlockCache) get(table, offset uint64) ([]byte, bool) {
+	block, hit, _ := c.lookup(table, offset, 0)
+	return block, hit
+}
+
+// lookup is get with one more answer for a miss: whether the caller should add the
+// block that it reads to the cache, and size is the size of that block. A block that
+// does not fit in a part of the cache is never added. A part of the cache that has room
+// says yes. A part that is full says yes to one miss in admitMask+1, chosen at random.
+func (c *BlockCache) lookup(table, offset uint64, size int) (block []byte, hit, admit bool) {
 	if c == nil {
-		return nil, false
+		return nil, false, false
 	}
 	k := blockKey{table, offset}
 	s := &c.shards[k.shard()]
@@ -123,17 +146,20 @@ func (c *BlockCache) get(table, offset uint64) ([]byte, bool) {
 	e := s.items[k]
 	if e == nil {
 		s.misses++
+		if size+entryOverhead <= s.capacity {
+			admit = s.bytes*fullDenominator <= s.capacity*fullNumerator || rand.Uint32()&admitMask == 0
+		}
 		s.mu.Unlock()
-		return nil, false
+		return nil, false, admit
 	}
 	s.hits++
 	if s.first != e {
 		s.unlink(e)
 		s.pushFront(e)
 	}
-	block := e.block
+	block = e.block
 	s.mu.Unlock()
-	return block, true
+	return block, true, false
 }
 
 // put adds the block at offset of the table, and drops the blocks that were used least

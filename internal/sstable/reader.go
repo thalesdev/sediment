@@ -231,9 +231,10 @@ func (r *Reader) mayContain(blockOffset uint64, key []byte) bool {
 // because a separator is less than the first key of the next block.
 //
 // The slices foundKey and value are copies that the caller owns. If Options.Cache is
-// set, Find takes the block from the cache, or reads it, checks it and adds it to the
-// cache. If not, it reads the block into a buffer from a pool and gives the buffer
-// back, so that a lookup does not allocate a whole block.
+// set, Find takes the block from the cache. If the block is not there, it reads it,
+// checks it and adds it to the cache, or, when the cache is full and keeps only some
+// of the blocks that it does not hold, reads it into a buffer from a pool and gives the
+// buffer back, so that a lookup does not allocate a whole block.
 func (r *Reader) Find(key []byte) (foundKey, value []byte, found bool, err error) {
 	index := r.newIndexIter()
 	index.Seek(key)
@@ -248,14 +249,17 @@ func (r *Reader) Find(key []byte) (foundKey, value []byte, found bool, err error
 		return nil, nil, false, nil
 	}
 	if cache := r.opts.Cache; cache != nil {
-		block, ok := cache.get(r.opts.CacheID, h.offset)
-		if !ok {
+		block, hit, admit := cache.lookup(r.opts.CacheID, h.offset, int(h.size))
+		if hit {
+			return r.findInBlock(block, key)
+		}
+		if admit {
 			if block, err = r.readBlock(h); err != nil {
 				return nil, nil, false, err
 			}
 			cache.put(r.opts.CacheID, h.offset, block)
+			return r.findInBlock(block, key)
 		}
-		return r.findInBlock(block, key)
 	}
 	pooled := blockPool.Get().(*[]byte)
 	block, backing, err := r.readBlockBuf(h, *pooled)

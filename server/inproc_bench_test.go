@@ -185,3 +185,19 @@ func BenchmarkInprocGetShaleTablesCacheAll(b *testing.B) {
 func BenchmarkInprocGetShaleTables50ConnsCacheAll(b *testing.B) {
 	inprocConns(b, shaleStoreCache(b, 1000000, 1<<20, 512<<20), "GET", 1000000, 50)
 }
+
+func BenchmarkInprocGetShaleTablesHot(b *testing.B) {
+	inproc(b, shaleStoreCache(b, 1000000, 1<<20, -1), "GET", 50000)
+}
+
+func BenchmarkInprocGetShaleTablesHot8M(b *testing.B) {
+	inproc(b, shaleStoreCache(b, 1000000, 1<<20, 0), "GET", 50000)
+}
+
+func BenchmarkInprocGetShaleTablesHot50Conns(b *testing.B) {
+	inprocConns(b, shaleStoreCache(b, 1000000, 1<<20, -1), "GET", 50000, 50)
+}
+
+func BenchmarkInprocGetShaleTablesHot8M50Conns(b *testing.B) {
+	inprocConns(b, shaleStoreCache(b, 1000000, 1<<20, 0), "GET", 50000, 50)
+}
