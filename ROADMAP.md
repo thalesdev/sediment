@@ -39,8 +39,13 @@ sediment is a key-value database that speaks the Redis protocol (RESP), built on
 ## Next
 
 ### 8. Server performance
-- [ ] **CPU per command**: with one core each, Redis does 2.3 to 6.3 times our rate with a pipeline (0.5 to 1.8 us of CPU per command against 3.3 to 10.5). Profile one core in a `SET` phase and a `GET` phase, and reduce what the profile shows (allocations in the parser and the reply, the Shale write path, the table read on `GET`). Each change with its before and after.
-- [ ] Profile the server without a pipeline: 0.5 ms per command with 50 clients is slow for loopback, and the cause is not known.
+- [ ] **CPU per command**: with one core each, Redis does 2.3 to 6.3 times our rate with a pipeline (0.33 to 0.83 us of user CPU per command against 2.2 to 3.7, and 0.17 to 1.0 us of system CPU against 1.0 to 2.2). A benchmark without the network (`make bench-inproc`) splits our cost per command, with a pipeline of 16:
+  - the server layer (parser, command, reply): 0.31 us for `SET` and 0.17 us for `GET`;
+  - the engine: 1.15 us for `SET`, 0.53 us for `GET` from the memtable and 2.2 us for `GET` from a table;
+  - the rest, about 3 us per command, is the network and the scheduler of Go (read, `kevent`, write, waking threads), and a `PING` test decides if an event loop is worth it.
+- [ ] **Block cache** for `GET`: a table read is 1.7 us of the 2.4 us of a cold `GET` (the `pread`), so a cache removes about 70% of it.
+- [ ] **Skiplist in an arena** for the memtable: the pointers of 64 MiB of nodes make the garbage collector about 15% of the CPU of a write in the profile without the network, and a skiplist with no pointers costs it nothing and removes 3 allocations per write.
+- [x] Not worth it, measured: the WAL on a file that is already allocated (0.1 us per `SET`), and the allocations of the parser (the whole server layer is 0.17 to 0.31 us).
 - [ ] Block pool or block cache for `GET` (about 4.9 KiB per command), after the profile confirms it.
 - [x] Run the consecutive `SET` commands of a pipeline as one write (`SetMany`), after the numbers showed one wait for the log per command.
 - [ ] A `MultiGet` in Shale (one read state and one sequence number for many keys), for pipelined `GET` and `MGET`, only if a profile of pipelined `GET` shows that cost.

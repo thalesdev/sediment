@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: all build test race full test-full race-full fuzz cover bench bench-compare bench-server vuln fmt fmt-check vet check compat tidy clean help
+.PHONY: all build test race full test-full race-full fuzz cover bench bench-compare bench-server bench-inproc vuln fmt fmt-check vet check compat tidy clean help
 
 FUZZTIME ?= 10s
 BENCHCOUNT ?= 1
@@ -52,6 +52,9 @@ bench-compare: ## Shale against goleveldb with the db_bench workloads, slow (BEN
 
 bench-server: ## server benchmarks, with and without pipelining
 	$(GO) test -run '^$$' -bench Benchmark -benchtime=2s -benchmem ./server
+
+bench-inproc: ## server cost per command without the network, with a pipeline of 16
+	$(GO) test -run '^$$' -bench Inproc -benchtime=2000000x -benchmem ./server
 
 vuln: ## check the dependencies and the code for known vulnerabilities
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
