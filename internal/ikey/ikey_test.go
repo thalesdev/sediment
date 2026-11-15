@@ -227,7 +227,7 @@ func TestCompare(t *testing.T) {
 }
 
 func TestLookup(t *testing.T) {
-	list := skiplist.NewLockedList(Compare, 1)
+	list := skiplist.NewList(Compare, 1)
 	insert := func(user string, seq uint64, kind Kind) {
 		list.Insert(Append(nil, []byte(user), seq, kind), []byte(user))
 	}

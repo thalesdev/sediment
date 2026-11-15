@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: all build test race full test-full race-full fuzz cover bench bench-compare fmt fmt-check vet check compat tidy clean help
+.PHONY: all build test race full test-full race-full fuzz cover bench bench-compare bench-server bench-inproc vuln fmt fmt-check vet check compat tidy clean help
 
 FUZZTIME ?= 10s
 BENCHCOUNT ?= 1
@@ -31,6 +31,11 @@ fuzz: ## every fuzz target for FUZZTIME each (default 10s)
 	$(GO) test ./internal/manifest -run '^$$' -fuzz '^FuzzDecode$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
 	$(GO) test ./internal/ikey -run '^$$' -fuzz '^FuzzCompare$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
 	$(GO) test ./internal/ikey -run '^$$' -fuzz '^FuzzParse$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./resp -run '^$$' -fuzz '^FuzzReadCommand$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./resp -run '^$$' -fuzz '^FuzzReadValue$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./resp -run '^$$' -fuzz '^FuzzPending$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./server/acl -run '^$$' -fuzz '^FuzzParse$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./internal/skiplist -run '^$$' -fuzz '^FuzzList$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
 
 full: check test-full race-full compat fuzz ## everything: checks, all tests, race, compat and fuzz
 
@@ -45,6 +50,16 @@ bench-compare: ## Shale against goleveldb with the db_bench workloads, slow (BEN
 	cd compat && $(GO) test -run '^$$' -bench '^Benchmark(FillRandom|Overwrite|ReadRandom|FillRandomParallel)$$' -benchtime=1000000x -count=$(BENCHCOUNT)
 	cd compat && $(GO) test -run '^$$' -bench '^BenchmarkFillSync$$' -benchtime=1000x -count=$(BENCHCOUNT)
 	cd compat && $(GO) test -run '^$$' -bench '^BenchmarkFillSyncParallel$$' -benchtime=4000x -count=$(BENCHCOUNT)
+
+bench-server: ## server benchmarks, with and without pipelining
+	$(GO) test -run '^$$' -bench Benchmark -benchtime=2s -benchmem ./server
+
+bench-inproc: ## server cost per command without the network, with a pipeline of 16
+	$(GO) test -run '^$$' -bench Inproc -benchtime=2000000x -benchmem ./server
+
+vuln: ## check the dependencies and the code for known vulnerabilities
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	cd compat && $(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 fmt: ## format all Go files (main module and compat)
 	gofmt -w .

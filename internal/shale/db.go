@@ -10,6 +10,7 @@ import (
 
 	"github.com/thalesdev/sediment/internal/batch"
 	"github.com/thalesdev/sediment/internal/ikey"
+	"github.com/thalesdev/sediment/internal/sstable"
 	"github.com/thalesdev/sediment/internal/wal"
 )
 
@@ -34,9 +35,17 @@ import (
 //
 // Each Open that finds writes in the logs also makes one table.
 type DB struct {
-	dir  string
-	opts Options
-	lock *os.File
+	dir   string
+	opts  Options
+	lock  *os.File
+	cache *sstable.BlockCache
+
+	stallFlush      stallStat
+	stallCompaction stallStat
+	freezes         durStat
+	flushes         atomic.Uint64
+	flushNanos      atomic.Int64
+	compactNanos    atomic.Int64
 
 	mu        sync.Mutex
 	cond      *sync.Cond

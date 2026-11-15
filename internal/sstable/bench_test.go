@@ -127,3 +127,38 @@ func BenchmarkIterator(b *testing.B) {
 		}
 	})
 }
+
+func benchFind(b *testing.B, cache *BlockCache) {
+	b.Helper()
+	entries := numbered(benchEntries*5, 100)
+	dst := &fakeDst{}
+	w := NewWriter(dst, Options{})
+	for _, e := range entries {
+		if err := w.Add(e.key, e.value); err != nil {
+			b.Fatal(err)
+		}
+	}
+	if err := w.Finish(); err != nil {
+		b.Fatal(err)
+	}
+	data := dst.buf.Bytes()
+	r, err := Open(bytes.NewReader(data), int64(len(data)), Options{Cache: cache, CacheID: 1})
+	if err != nil {
+		b.Fatal(err)
+	}
+	keys := make([][]byte, 4096)
+	for i := range keys {
+		keys[i] = entries[(i*7919)%len(entries)].key
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		if _, _, found, err := r.Find(keys[i%len(keys)]); err != nil || !found {
+			b.Fatalf("Find: %v, %v", found, err)
+		}
+	}
+}
+
+func BenchmarkFindNoCache(b *testing.B)   { benchFind(b, nil) }
+func BenchmarkFindCacheHit(b *testing.B)  { benchFind(b, NewBlockCache(64<<20)) }
+func BenchmarkFindCacheMiss(b *testing.B) { benchFind(b, NewBlockCache(512<<10)) }

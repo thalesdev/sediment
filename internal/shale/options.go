@@ -5,6 +5,11 @@ package shale
 // defaultMemtableSize is the memtable size when Options.MemtableSize is 0.
 const defaultMemtableSize = 4 << 20
 
+// maxMemtableSize is the largest memtable size. A memtable keeps its nodes, keys and
+// values in 4 GiB of blocks at most, and a larger limit could leave a write with no
+// room after it is in the log.
+const maxMemtableSize = 1 << 30
+
 // Options sets the parameters of a DB. The zero value is valid.
 type Options struct {
 	// Sync makes each write flush the write-ahead log to stable storage
@@ -19,8 +24,15 @@ type Options struct {
 	// MemtableSize is the size in bytes at which the DB freezes the memtable
 	// and writes it to a table in the background. The default is 4 MiB. The
 	// size is an estimate. A write that makes the memtable larger is not
-	// refused, and the next write starts the flush.
+	// refused, and the next write starts the flush. The largest size is 1 GiB.
 	MemtableSize int
+
+	// BlockCacheSize is the size in bytes of the cache of the data blocks of the tables,
+	// which all the tables of the DB share. The default is 8 MiB. A negative value
+	// turns the cache off. A cache that is large enough for the blocks that the reads
+	// use saves the read of the file, the check of the checksum and the allocation of
+	// the block for each Get that reaches a table.
+	BlockCacheSize int
 
 	// flushHook is called by the flush at the stages "table", "commit" and
 	// "cleanup". If it returns an error, the flush fails. Only the tests of the
@@ -42,10 +54,24 @@ type Options struct {
 	disableCompaction bool
 }
 
+// defaultBlockCacheSize is the size of the block cache when Options.BlockCacheSize is 0.
+const defaultBlockCacheSize = 8 << 20
+
+// blockCacheSize returns the size of the block cache, or 0 if it is off.
+func (o Options) blockCacheSize() int {
+	switch {
+	case o.BlockCacheSize < 0:
+		return 0
+	case o.BlockCacheSize == 0:
+		return defaultBlockCacheSize
+	}
+	return o.BlockCacheSize
+}
+
 // memtableSize returns the size at which the memtable is frozen.
 func (o Options) memtableSize() int {
 	if o.MemtableSize <= 0 {
 		return defaultMemtableSize
 	}
-	return o.MemtableSize
+	return min(o.MemtableSize, maxMemtableSize)
 }

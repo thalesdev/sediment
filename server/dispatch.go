@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: MIT
+
+package server
+
+import (
+	"runtime/debug"
+	"strings"
+
+	"github.com/thalesdev/sediment/resp"
+	"github.com/thalesdev/sediment/server/command"
+)
+
+// execute checks and runs one command, and returns the reply. A panic of the
+// command becomes an error reply, and the connection closes after it.
+func (c *conn) execute(args [][]byte) (reply resp.Value) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.s.opts.Log.Error("command panic", "client", c.client.ID, "panic", r, "stack", string(debug.Stack()))
+			c.client.Close = true
+			reply = resp.Error("ERR internal error")
+		}
+	}()
+	s := c.s
+	spec := s.reg.Lookup(args[0])
+	if spec == nil {
+		return resp.Error("ERR unknown command '" + printable(args[0], 64) + "'" + argsPreview(args[1:]))
+	}
+	if (spec.Arity > 0 && len(args) != spec.Arity) || (spec.Arity < 0 && len(args) < -spec.Arity) {
+		return command.WrongArgs(spec.Name)
+	}
+	if !c.client.Authed && !spec.NoAuth {
+		s.deniedCmds.Add(1)
+		return resp.Error("NOAUTH Authentication required.")
+	}
+	if s.opts.Access != nil && !spec.NoAuth && !s.opts.Access.Allowed(c.client.User, spec.Name, spec.Categories) {
+		s.deniedCmds.Add(1)
+		return resp.Error("NOPERM User " + printable([]byte(c.client.User), 64) + " has no permissions to run the '" + spec.Name + "' command")
+	}
+	s.totalCommands.Add(1)
+	return spec.Handler(s.env, c.client, args)
+}
+
+// printable returns b cut to max bytes, with each byte that is not printable
+// ASCII replaced by a question mark.
+func printable(b []byte, max int) string {
+	if len(b) > max {
+		b = b[:max]
+	}
+	var sb strings.Builder
+	for _, c := range b {
+		if c < 0x20 || c > 0x7e {
+			c = '?'
+		}
+		sb.WriteByte(c)
+	}
+	return sb.String()
+}
+
+// argsPreview returns the start of the arguments of an unknown command, as
+// Redis does, cut so that a client cannot make the server echo a large input.
+func argsPreview(args [][]byte) string {
+	if len(args) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(", with args beginning with:")
+	for i, a := range args {
+		if i == 3 {
+			break
+		}
+		sb.WriteString(" '")
+		sb.WriteString(printable(a, 32))
+		sb.WriteString("'")
+	}
+	return sb.String()
+}

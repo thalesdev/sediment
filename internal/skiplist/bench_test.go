@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-func benchList(b *testing.B, n int) *LockedList {
+func benchList(b *testing.B, n int) *List {
 	b.Helper()
-	l := NewLockedList(bytes.Compare, 42)
+	l := NewList(bytes.Compare, 42)
 	for _, i := range rand.New(rand.NewPCG(7, 7)).Perm(n) {
-		l.Insert(key(i), val(i))
+		mustInsert(b, l, key(i), val(i))
 	}
 	return l
 }
@@ -24,14 +24,14 @@ func BenchmarkInsert(b *testing.B) {
 		keys[i] = key(j)
 	}
 	v := val(0)
-	l := NewLockedList(bytes.Compare, 42)
+	l := NewList(bytes.Compare, 42)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := range b.N {
 		if i%chunk == 0 {
-			l = NewLockedList(bytes.Compare, 42)
+			l = NewList(bytes.Compare, 42)
 		}
-		l.Insert(keys[i%chunk], v)
+		mustInsert(b, l, keys[i%chunk], v)
 	}
 }
 
@@ -62,4 +62,23 @@ func BenchmarkIteratorNext(b *testing.B) {
 		}
 		it.Next()
 	}
+}
+
+func BenchmarkSeekParallel(b *testing.B) {
+	const n = 100000
+	l := benchList(b, n)
+	targets := make([][]byte, 1024)
+	for i := range targets {
+		targets[i] = key(rand.IntN(n))
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		it := l.NewIterator()
+		i := 0
+		for pb.Next() {
+			it.Seek(targets[i%len(targets)])
+			i++
+		}
+	})
 }

@@ -692,6 +692,9 @@ func TestCompactionStall(t *testing.T) {
 			}
 			time.Sleep(time.Millisecond)
 		}
+		if m := db.Metrics(); m.StallCompactionCount == 0 || m.StallCompactionNanos < int64(400*time.Millisecond) {
+			t.Fatalf("the write waited for 500 ms and the metrics say %d waits and %d ns", m.StallCompactionCount, m.StallCompactionNanos)
+		}
 		close(stop)
 		wg.Wait()
 		for i := range int(written.Load()) {

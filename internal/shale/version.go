@@ -18,7 +18,7 @@ import (
 
 // memtable is a skip list of internal keys with the data that the flush needs.
 type memtable struct {
-	list *skiplist.LockedList
+	list *skiplist.List
 
 	// wal is the number of the log file that holds the writes of the memtable.
 	wal uint64
@@ -31,7 +31,7 @@ type memtable struct {
 // newMemtable returns an empty memtable for the log file with number wal.
 func newMemtable(wal uint64) *memtable {
 	return &memtable{
-		list: skiplist.NewLockedList(ikey.Compare, uint64(time.Now().UnixNano())),
+		list: skiplist.NewList(ikey.Compare, uint64(time.Now().UnixNano())),
 		wal:  wal,
 	}
 }
@@ -46,6 +46,7 @@ type table struct {
 	reader   *sstable.Reader
 	refs     atomic.Int64
 	obsolete atomic.Bool
+	cache    *sstable.BlockCache
 }
 
 // unref drops one reference. The last reference closes the file, and removes it
@@ -58,6 +59,7 @@ func (t *table) unref() {
 	t.file.Close()
 	if t.obsolete.Load() {
 		os.Remove(t.path)
+		t.cache.DropTable(t.meta.Number)
 	}
 }
 
@@ -110,9 +112,17 @@ func tableOptions() sstable.Options {
 	return sstable.Options{Compare: ikey.Compare, FilterKey: ikey.FilterKey}
 }
 
+// readerOptions returns the options of the reader of the table with the file number
+// number, which keeps its blocks in cache. A nil cache keeps nothing.
+func readerOptions(cache *sstable.BlockCache, number uint64) sstable.Options {
+	o := tableOptions()
+	o.Cache, o.CacheID = cache, number
+	return o
+}
+
 // openTable opens the table file of meta in dir. It returns an error if the size
 // of the file is not the size of the MANIFEST or if the table does not open.
-func openTable(dir string, meta manifest.TableMeta) (*table, error) {
+func openTable(dir string, meta manifest.TableMeta, cache *sstable.BlockCache) (*table, error) {
 	name := tableName(meta.Number)
 	f, err := os.Open(filepath.Join(dir, name))
 	if err != nil {
@@ -127,12 +137,12 @@ func openTable(dir string, meta manifest.TableMeta) (*table, error) {
 		f.Close()
 		return nil, fmt.Errorf("shale: table %s has %d bytes, but the MANIFEST says %d: %w", name, info.Size(), meta.Size, manifest.ErrCorrupt)
 	}
-	reader, err := sstable.Open(f, info.Size(), tableOptions())
+	reader, err := sstable.Open(f, info.Size(), readerOptions(cache, meta.Number))
 	if err != nil {
 		f.Close()
 		return nil, fmt.Errorf("shale: table %s: %w", name, err)
 	}
-	return &table{meta: meta, path: filepath.Join(dir, name), file: f, reader: reader}, nil
+	return &table{meta: meta, path: filepath.Join(dir, name), file: f, reader: reader, cache: cache}, nil
 }
 
 // lookupMemtable finds the newest version of user that the lookup key sees in m.

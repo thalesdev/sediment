@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/thalesdev/sediment/internal/ikey"
 	"github.com/thalesdev/sediment/internal/manifest"
@@ -127,7 +128,9 @@ func (db *DB) compactLoop() {
 		}
 		db.compacting.Store(true)
 		db.mu.Unlock()
+		began := time.Now()
 		output, err := db.compact(inputs, chosen.includesOldest)
+		db.compactNanos.Add(int64(time.Since(began)))
 		db.mu.Lock()
 		if err != nil {
 			db.compacting.Store(false)
@@ -192,7 +195,7 @@ func (db *DB) compact(inputs []*table, includesOldest bool) (*table, error) {
 		edit.Delete = append(edit.Delete, manifest.TableRef{Level: 0, Number: t.meta.Number})
 	}
 	if meta != nil {
-		if output, err = openTable(db.dir, *meta); err != nil {
+		if output, err = openTable(db.dir, *meta, db.cache); err != nil {
 			return nil, err
 		}
 		edit.Add = []manifest.TableMeta{*meta}
@@ -236,7 +239,9 @@ func (db *DB) writeCompacted(number uint64, it *dropIter, smallestSeq, largestSe
 	}
 	w := sstable.NewWriter(syncFile{f}, tableOptions())
 	var smallest, largest []byte
+	y := newYielder()
 	for ; it.Valid(); it.Next() {
+		y.tick()
 		if smallest == nil {
 			smallest = bytes.Clone(it.Key())
 		}
