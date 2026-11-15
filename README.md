@@ -24,13 +24,13 @@ the logo is what you find when you dig.
 
 ## Status
 
-The storage engine and a first RESP server are done. `redis-cli` and
-`redis-benchmark` run against the server, and a write that had returned survives a
-`kill -9`. The server has not been optimized yet.
+The storage engine and the RESP server are done and measured. `redis-cli` and
+`redis-benchmark` run against the server, go-redis works on RESP2 and RESP3, and a write
+that had returned survives a `kill -9`.
 
 | Part | State |
 |---|---|
-| Shale, the storage engine | Done: write-ahead log, memtable, SSTables, MANIFEST, compaction, group commit, atomic batches |
+| Shale, the storage engine | Done: write-ahead log, memtable (a skiplist without a lock), SSTables, block cache, MANIFEST, compaction, group commit, atomic batches |
 | `resp`, the protocol | Done: RESP2 and RESP3, fuzzed, with limits on every size |
 | `sedimentd`, the RESP server | Done for strings: `GET`, `SET`, `DEL`, `EXISTS`, `MGET`, `MSET`, pipelining, `HELLO 3` |
 | Security | TLS 1.3 and mTLS, users with an ACL file, safe defaults. Key patterns and run-time `ACL SETUSER` come later |
@@ -158,9 +158,8 @@ change it).
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md). Next is a check with the real `redis-cli` and
-`redis-benchmark`, then the items of the backlog, each with the reason it would be
-picked up.
+See [ROADMAP.md](ROADMAP.md): what is done, what was decided against, the candidates
+for what comes next, and a backlog where each item has the reason it would be picked up.
 
 ## License
 
