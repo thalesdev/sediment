@@ -107,15 +107,20 @@ Reproduce them with `make bench-compare`.
         write-ahead log          memtable (skip list)      +--> bloom filter
         (one record per group)         |                   +--> index block
                                        | full              +--> one data block
-                                       v
-                              flush (background)
-                                       |
+                                       v                        ^
+                              flush (background)           block cache
+                                       |                   (the file, on a miss)
                                        v
                        SSTables ---> MANIFEST (one edit per change)
                           |
                           v
                  size-tiered compaction (background)
 ```
+
+A data block comes from the block cache when it is there, and from the file when it
+is not. All the tables of a DB share one cache, 8 MiB by default and 64 MiB in
+`sedimentd`. It helps a hot set of keys. A read at random over data much larger than
+the cache is almost all misses.
 
 Every internal key carries a sequence number. A table has a range of sequence
 numbers, and the ranges do not overlap, so the order of the tables is the order
