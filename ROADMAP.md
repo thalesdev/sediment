@@ -44,7 +44,6 @@ sediment is a key-value database that speaks the Redis protocol (RESP), built on
 - [x] **Block cache** for `GET`: a hot set is read 51% faster with one connection and 68% faster with 50, with the default 8 MiB (see [BENCHMARKS.md](BENCHMARKS.md)). Left to do: a filter or a policy better than "one miss in eight" if a workload needs it, and a cache of the index blocks and of the parsed blocks (a hit still costs about 470 ns, most of it in the block iterator).
 - [x] **Skiplist in blocks without pointers and without a lock**: `SET` through the connection loop 31% faster on one core and 17% on 11, parallel reads of the memtable 59% faster, 0 allocations per insert. See [BENCHMARKS.md](BENCHMARKS.md). The memtable size is limited to 1 GiB, and a list that has no room returns `ErrFull`, which fails the DB. Left to do: reuse the blocks of a memtable after its flush, and measure the memory that a memtable really uses.
 - [x] Not worth it, measured: the WAL on a file that is already allocated (0.1 us per `SET`), and the allocations of the parser (the whole server layer is 0.17 to 0.31 us).
-- [ ] Block pool or block cache for `GET` (about 4.9 KiB per command), after the profile confirms it.
 - [x] Run the consecutive `SET` commands of a pipeline as one write (`SetMany`), after the numbers showed one wait for the log per command.
 - [ ] A `MultiGet` in Shale (one read state and one sequence number for many keys), for pipelined `GET` and `MGET`, only if a profile of pipelined `GET` shows that cost.
 
