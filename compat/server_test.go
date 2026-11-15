@@ -91,6 +91,64 @@ func TestGoRedisClient(t *testing.T) {
 		})
 	}
 
+	t.Run("Should run the counter and string commands with go-redis", func(t *testing.T) {
+		ctx := context.Background()
+		rdb := redis.NewClient(&redis.Options{Addr: addr})
+		defer rdb.Close()
+		if n, err := rdb.Incr(ctx, "cnt").Result(); err != nil || n != 1 {
+			t.Fatalf("INCR: %d, %v", n, err)
+		}
+		if n, err := rdb.IncrBy(ctx, "cnt", 9).Result(); err != nil || n != 10 {
+			t.Fatalf("INCRBY: %d, %v", n, err)
+		}
+		if n, err := rdb.Decr(ctx, "cnt").Result(); err != nil || n != 9 {
+			t.Fatalf("DECR: %d, %v", n, err)
+		}
+		if n, err := rdb.Append(ctx, "str", "abc").Result(); err != nil || n != 3 {
+			t.Fatalf("APPEND: %d, %v", n, err)
+		}
+		if n, err := rdb.StrLen(ctx, "str").Result(); err != nil || n != 3 {
+			t.Fatalf("STRLEN: %d, %v", n, err)
+		}
+		if ok, err := rdb.SetNX(ctx, "str", "x", 0).Result(); err != nil || ok {
+			t.Fatalf("SETNX: %v, %v", ok, err)
+		}
+		if got, err := rdb.GetSet(ctx, "str", "new").Result(); err != nil || got != "abc" {
+			t.Fatalf("GETSET: %q, %v", got, err)
+		}
+		if got, err := rdb.GetDel(ctx, "str").Result(); err != nil || got != "new" {
+			t.Fatalf("GETDEL: %q, %v", got, err)
+		}
+	})
+
+	t.Run("Should run the TTL commands with go-redis", func(t *testing.T) {
+		ctx := context.Background()
+		rdb := redis.NewClient(&redis.Options{Addr: addr})
+		defer rdb.Close()
+		if err := rdb.Set(ctx, "ttl", "v", 30*time.Second).Err(); err != nil {
+			t.Fatal(err)
+		}
+		if d, err := rdb.TTL(ctx, "ttl").Result(); err != nil || d <= 0 || d > 30*time.Second {
+			t.Fatalf("TTL: %v, %v", d, err)
+		}
+		if ok, err := rdb.Persist(ctx, "ttl").Result(); err != nil || !ok {
+			t.Fatalf("PERSIST: %v, %v", ok, err)
+		}
+		if d, err := rdb.TTL(ctx, "ttl").Result(); err != nil || d != -1 {
+			t.Fatalf("TTL after PERSIST: %v, %v", d, err)
+		}
+		if ok, err := rdb.Expire(ctx, "ttl", time.Hour).Result(); err != nil || !ok {
+			t.Fatalf("EXPIRE: %v, %v", ok, err)
+		}
+		if err := rdb.Set(ctx, "short", "v", 50*time.Millisecond).Err(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(120 * time.Millisecond)
+		if _, err := rdb.Get(ctx, "short").Result(); !errors.Is(err, redis.Nil) {
+			t.Fatalf("GET after expiry: %v", err)
+		}
+	})
+
 	t.Run("Should pipeline many commands with go-redis", func(t *testing.T) {
 		ctx := context.Background()
 		rdb := redis.NewClient(&redis.Options{Addr: addr})

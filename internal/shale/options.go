@@ -34,6 +34,17 @@ type Options struct {
 	// the block for each Get that reaches a table.
 	BlockCacheSize int
 
+	// CompactionFilter is called by a compaction for the newest version of each
+	// key when that version is a put. If it returns true, the compaction drops
+	// the key, so that it reads as deleted, and an older version of the key does
+	// not come back. The default is nil, which keeps every key.
+	//
+	// It runs in the goroutine of the compaction, so it must be fast and must not
+	// call the DB. It must give the same answer for the same key and value, or
+	// only change from false to true as time goes by, and it must not keep the
+	// slices that it gets.
+	CompactionFilter func(key, value []byte) bool
+
 	// flushHook is called by the flush at the stages "table", "commit" and
 	// "cleanup". If it returns an error, the flush fails. Only the tests of the
 	// package set it.

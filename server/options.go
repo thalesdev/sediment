@@ -39,6 +39,10 @@ type Options struct {
 	// default is 64 MiB.
 	MaxReply int
 
+	// Now returns the time that key expiry uses. The default is time.Now. Tests
+	// set it to move the clock.
+	Now func() time.Time
+
 	// IdleTimeout closes a connection that sends nothing for this long. The
 	// default is 10 minutes. A negative value turns it off.
 	IdleTimeout time.Duration

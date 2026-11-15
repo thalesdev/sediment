@@ -27,7 +27,7 @@ func get(env *Env, _ *Client, args [][]byte) resp.Value {
 	if bad, ok := env.checkKey(args[1]); !ok {
 		return bad
 	}
-	value, err := env.Store.Get(args[1])
+	value, _, err := env.load(args[1])
 	if isNotFound(err) {
 		return resp.Null()
 	}
@@ -37,20 +37,40 @@ func get(env *Env, _ *Client, args [][]byte) resp.Value {
 	return resp.Bulk(value)
 }
 
-// set is SET key value [NX | XX] [GET].
+// set is SET key value [NX | XX] [GET] [EX s | PX ms | EXAT s | PXAT ms | KEEPTTL].
 func set(env *Env, _ *Client, args [][]byte) resp.Value {
 	key, value := args[1], args[2]
-	var nx, xx, wantOld bool
-	for _, opt := range args[3:] {
-		switch strings.ToUpper(string(opt)) {
+	var nx, xx, wantOld, keepTTL, hasExpiry bool
+	var deadline int64
+	opts := args[3:]
+	for i := 0; i < len(opts); i++ {
+		name := strings.ToUpper(string(opts[i]))
+		switch name {
 		case "NX":
 			nx = true
 		case "XX":
 			xx = true
 		case "GET":
 			wantOld = true
-		case "EX", "PX", "EXAT", "PXAT", "KEEPTTL":
-			return resp.Error("ERR expiration is not supported")
+		case "KEEPTTL":
+			if hasExpiry || keepTTL {
+				return replySyntax
+			}
+			keepTTL = true
+		case "EX", "PX", "EXAT", "PXAT":
+			if hasExpiry || keepTTL || i+1 >= len(opts) {
+				return replySyntax
+			}
+			i++
+			n, ok := parseInt(opts[i])
+			if !ok {
+				return replyNotInt
+			}
+			d, ok := setDeadline(env, name, n)
+			if !ok {
+				return resp.Error("ERR invalid expire time in 'set' command")
+			}
+			deadline, hasExpiry = d, true
 		default:
 			return replySyntax
 		}
@@ -61,17 +81,17 @@ func set(env *Env, _ *Client, args [][]byte) resp.Value {
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	if !nx && !xx && !wantOld {
+	if !nx && !xx && !wantOld && !keepTTL {
 		stripe := env.Locks.RLock(key)
 		defer env.Locks.RUnlock(stripe)
-		if err := env.Store.Put(key, value); err != nil {
+		if err := env.save(key, value, deadline); err != nil {
 			return env.storageError("set", err)
 		}
 		return replyOK
 	}
 	stripe := env.Locks.Lock(key)
 	defer env.Locks.Unlock(stripe)
-	old, err := env.Store.Get(key)
+	old, oldDeadline, err := env.load(key)
 	found := err == nil
 	if err != nil && !isNotFound(err) {
 		return env.storageError("set", err)
@@ -79,13 +99,34 @@ func set(env *Env, _ *Client, args [][]byte) resp.Value {
 	if (nx && found) || (xx && !found) {
 		return oldReply(wantOld, found, old)
 	}
-	if err := env.Store.Put(key, value); err != nil {
+	if keepTTL && found {
+		deadline = oldDeadline
+	}
+	if err := env.save(key, value, deadline); err != nil {
 		return env.storageError("set", err)
 	}
 	if wantOld {
 		return oldReply(true, found, old)
 	}
 	return replyOK
+}
+
+// setDeadline returns the deadline of a SET option, and false if n is not
+// positive or does not fit.
+func setDeadline(env *Env, option string, n int64) (int64, bool) {
+	if n <= 0 {
+		return 0, false
+	}
+	switch option {
+	case "EX":
+		return deadlineAt(env.nowMillis(), n, 1000)
+	case "PX":
+		return deadlineAt(env.nowMillis(), n, 1)
+	case "EXAT":
+		return deadlineAt(0, n, 1000)
+	default:
+		return n, true
+	}
 }
 
 // oldReply returns the old value for SET with GET, or null.
@@ -114,7 +155,7 @@ func del(env *Env, _ *Client, args [][]byte) resp.Value {
 			continue
 		}
 		seen[string(k)] = struct{}{}
-		if _, err := env.Store.Get(k); err != nil {
+		if _, _, err := env.load(k); err != nil {
 			if isNotFound(err) {
 				continue
 			}
@@ -139,7 +180,7 @@ func exists(env *Env, _ *Client, args [][]byte) resp.Value {
 		if bad, ok := env.checkKey(k); !ok {
 			return bad
 		}
-		if _, err := env.Store.Get(k); err == nil {
+		if _, _, err := env.load(k); err == nil {
 			n++
 		} else if !isNotFound(err) {
 			return env.storageError("exists", err)
@@ -156,7 +197,7 @@ func mget(env *Env, _ *Client, args [][]byte) resp.Value {
 		if bad, ok := env.checkKey(k); !ok {
 			return bad
 		}
-		v, err := env.Store.Get(k)
+		v, _, err := env.load(k)
 		switch {
 		case err == nil:
 			total += len(v)
@@ -189,7 +230,7 @@ func mset(env *Env, _ *Client, args [][]byte) resp.Value {
 	defer env.Locks.RUnlockStripes(stripes)
 	var batch shale.Batch
 	for i := range n {
-		batch.Put(pairs[2*i], pairs[2*i+1])
+		batchPut(&batch, pairs[2*i], pairs[2*i+1], 0)
 	}
 	if err := env.Store.Write(&batch); err != nil {
 		return env.storageError("mset", err)
@@ -211,7 +252,7 @@ func SetMany(env *Env, cmds [][][]byte) []resp.Value {
 			replies[i] = bad
 			continue
 		}
-		batch.Put(args[1], args[2])
+		batchPut(&batch, args[1], args[2], 0)
 		included = append(included, i)
 	}
 	if batch.Len() == 0 {
