@@ -61,19 +61,20 @@ func set(env *Env, _ *Client, args [][]byte) resp.Value {
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
-	var old []byte
-	found := false
-	if nx || xx || wantOld {
-		var err error
-		old, err = env.Store.Get(key)
-		switch {
-		case err == nil:
-			found = true
-		case !isNotFound(err):
+	if !nx && !xx && !wantOld {
+		stripe := env.Locks.RLock(key)
+		defer env.Locks.RUnlock(stripe)
+		if err := env.Store.Put(key, value); err != nil {
 			return env.storageError("set", err)
 		}
+		return replyOK
+	}
+	stripe := env.Locks.Lock(key)
+	defer env.Locks.Unlock(stripe)
+	old, err := env.Store.Get(key)
+	found := err == nil
+	if err != nil && !isNotFound(err) {
+		return env.storageError("set", err)
 	}
 	if (nx && found) || (xx && !found) {
 		return oldReply(wantOld, found, old)
@@ -184,8 +185,8 @@ func mset(env *Env, _ *Client, args [][]byte) resp.Value {
 			return bad
 		}
 	}
-	stripes := env.Locks.LockKeys(n, func(i int) []byte { return pairs[2*i] })
-	defer env.Locks.UnlockStripes(stripes)
+	stripes := env.Locks.RLockKeys(n, func(i int) []byte { return pairs[2*i] })
+	defer env.Locks.RUnlockStripes(stripes)
 	var batch shale.Batch
 	for i := range n {
 		batch.Put(pairs[2*i], pairs[2*i+1])
@@ -216,9 +217,9 @@ func SetMany(env *Env, cmds [][][]byte) []resp.Value {
 	if batch.Len() == 0 {
 		return replies
 	}
-	stripes := env.Locks.LockKeys(len(included), func(n int) []byte { return cmds[included[n]][1] })
+	stripes := env.Locks.RLockKeys(len(included), func(n int) []byte { return cmds[included[n]][1] })
 	err := env.Store.Write(&batch)
-	env.Locks.UnlockStripes(stripes)
+	env.Locks.RUnlockStripes(stripes)
 	reply := replyOK
 	if err != nil {
 		reply = env.storageError("set", err)
