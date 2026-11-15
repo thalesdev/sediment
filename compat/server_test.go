@@ -149,6 +149,52 @@ func TestGoRedisClient(t *testing.T) {
 		}
 	})
 
+	t.Run("Should run the keyspace commands with go-redis", func(t *testing.T) {
+		ctx := context.Background()
+		rdb := redis.NewClient(&redis.Options{Addr: addr})
+		defer rdb.Close()
+		for i := range 25 {
+			if err := rdb.Set(ctx, fmt.Sprintf("ks:%02d", i), i, 0).Err(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := rdb.Set(ctx, "ks:gone", "v", 40*time.Millisecond).Err(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(100 * time.Millisecond)
+		it := rdb.Scan(ctx, 0, "ks:*", 4).Iterator()
+		n := 0
+		for it.Next(ctx) {
+			n++
+		}
+		if err := it.Err(); err != nil || n != 25 {
+			t.Fatalf("SCAN visited %d keys: %v", n, err)
+		}
+		if keys, err := rdb.Keys(ctx, "ks:0?").Result(); err != nil || len(keys) != 10 {
+			t.Fatalf("KEYS: %v, %v", keys, err)
+		}
+		if n, err := rdb.DBSize(ctx).Result(); err != nil || n < 25 {
+			t.Fatalf("DBSIZE: %d, %v", n, err)
+		}
+		if got, err := rdb.Type(ctx, "ks:00").Result(); err != nil || got != "string" {
+			t.Fatalf("TYPE: %q, %v", got, err)
+		}
+		if got, err := rdb.Type(ctx, "ks:gone").Result(); err != nil || got != "none" {
+			t.Fatalf("TYPE of an expired key: %q, %v", got, err)
+		}
+		if key, err := rdb.RandomKey(ctx).Result(); err != nil || key == "" {
+			t.Fatalf("RANDOMKEY: %q, %v", key, err)
+		}
+		it = rdb.ScanType(ctx, 0, "ks:*", 10, "string").Iterator()
+		n = 0
+		for it.Next(ctx) {
+			n++
+		}
+		if err := it.Err(); err != nil || n != 25 {
+			t.Fatalf("SCAN TYPE visited %d keys: %v", n, err)
+		}
+	})
+
 	t.Run("Should pipeline many commands with go-redis", func(t *testing.T) {
 		ctx := context.Background()
 		rdb := redis.NewClient(&redis.Options{Addr: addr})

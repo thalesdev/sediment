@@ -50,6 +50,9 @@ func (s nopStore) Put(_, _ []byte) error      { return nil }
 func (s nopStore) Delete([]byte) error        { return nil }
 func (s nopStore) Write(*shale.Batch) error   { return nil }
 func (s nopStore) Metrics() shale.Metrics     { return shale.Metrics{} }
+func (s nopStore) NewIterator(*shale.IterOptions) (shale.Iterator, error) {
+	return nil, nil
+}
 
 var _ command.Store = nopStore{}
 
