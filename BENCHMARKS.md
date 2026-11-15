@@ -336,5 +336,23 @@ with `ps` before and after each run. `sed-1` and `sed-2` are sediment with
 The medians of 8 rounds with all the cores, `SET` only (`batch3`): `-P 16`, Redis 499,875
 and sediment 639,744; `-P 64`, Redis 799,360 and sediment 761,542.
 
-Next step: a CPU profile with one core, in a `SET` phase and a `GET` phase with a
-pipeline of 16, to find where the 3 to 6 microseconds per command go.
+Splitting the CPU of each server with `ps` (user and system), with one core each:
+
+| us per command | Redis user + sys | sediment user + sys |
+|---|---:|---:|
+| `SET`, `-P 16` | 0.83 + 0.83 | 2.5 to 2.7 + 2.17 |
+| `GET`, `-P 16` | 0.50 + 1.00 | 3.3 to 3.7 + 1.5 to 1.7 |
+| `SET`, `-P 64` | 0.83 + 0.17 | 2.2 to 2.3 + 1.0 |
+| `GET`, `-P 64` | 0.33 + 0.33 | 2.8 to 3.2 + 1.17 |
+| `PING`, `-P 16` | 0.17 + 0.83 | 0.17 + 0.83 |
+
+- A `PING`, which uses no storage, costs the same in both. The network layer of Go is
+  not the problem.
+- The extra cost is in the user CPU of `SET` and `GET`, 3 to 9 times that of Redis. The
+  garbage collector is 4% to 8% of the CPU.
+- The CPU profile of Go on macOS puts 70% to 92% of the time in `syscall` and cannot be
+  trusted. The benchmark without the network (`make bench-inproc`) has no socket
+  system calls, and the times in it do not depend on the profiler: the server layer
+  costs 0.17 to 0.31 us per command, the engine 1.15 us for a `SET`, 0.53 us for a
+  `GET` from the memtable and 2.2 us for a `GET` from a table. The `pread` is 1.7 us of
+  the `GET` from a table.

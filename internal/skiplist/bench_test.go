@@ -63,3 +63,22 @@ func BenchmarkIteratorNext(b *testing.B) {
 		it.Next()
 	}
 }
+
+func BenchmarkSeekParallel(b *testing.B) {
+	const n = 100000
+	l := benchList(b, n)
+	targets := make([][]byte, 1024)
+	for i := range targets {
+		targets[i] = key(rand.IntN(n))
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		it := l.NewIterator()
+		i := 0
+		for pb.Next() {
+			it.Seek(targets[i%len(targets)])
+			i++
+		}
+	})
+}
