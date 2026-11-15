@@ -139,6 +139,24 @@ Inside Shale a write is a sequence, and a read looks at a few places:
                versions of a key and the expired keys dropped
 ```
 
+A snapshot and an iterator read a view that does not change while they run. `SCAN`,
+`KEYS`, `DBSIZE` and `RANDOMKEY` open an iterator, read, and close it inside one command:
+
+```
+ DB.Snapshot / DB.NewIterator
+   |
+   1. take the read state (memtable, frozen memtable, tables),
+   |  then the last sequence number
+   |
+   2. merge the sources in key order: the memtables, and the tables that can hold the range
+   |
+   3. for each key, return the newest version that is not above the sequence number,
+   |  and hide a key whose newest version is a delete
+   |
+   4. Release or Close gives the state back. Until then the table files stay on disk,
+      even if a compaction replaced them
+```
+
 A data block comes from the block cache when it is there, and from the file when it
 is not. All the tables of a DB share one cache, 8 MiB by default and 64 MiB in
 `sedimentd`. It helps a hot set of keys. A read at random over data much larger than
