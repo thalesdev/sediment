@@ -23,11 +23,19 @@ import (
 // reads an old version of a key yet, so a compaction does not keep one. A source
 // must be sorted with ikey.Compare, and an entry with a key that is not valid is
 // an error.
+//
+// If filter is set, it is called for the first entry of each user key when that
+// entry is a put. If it returns true, the entry is dropped when dropDeletes is
+// true, and otherwise it is replaced by a delete with the same sequence number,
+// so that an older version of the key in a table outside the compaction stays
+// hidden.
 type dropIter struct {
 	src         merge.Source
 	dropDeletes bool
+	filter      func(key, value []byte) bool
 	last        []byte
 	haveLast    bool
+	tombstone   []byte
 	err         error
 }
 
@@ -56,10 +64,21 @@ func (d *dropIter) Valid() bool {
 }
 
 // Key returns the key of the current entry.
-func (d *dropIter) Key() []byte { return d.src.Key() }
+func (d *dropIter) Key() []byte {
+	if d.tombstone != nil {
+		return d.tombstone
+	}
+	return d.src.Key()
+}
 
-// Value returns the value of the current entry.
-func (d *dropIter) Value() []byte { return d.src.Value() }
+// Value returns the value of the current entry. It is empty for an entry that the
+// filter turned into a delete.
+func (d *dropIter) Value() []byte {
+	if d.tombstone != nil {
+		return nil
+	}
+	return d.src.Value()
+}
 
 // Err returns the error that stopped the iteration, or nil.
 func (d *dropIter) Err() error {
@@ -71,8 +90,9 @@ func (d *dropIter) Err() error {
 
 // skip moves the source forward to the next entry that the compaction keeps.
 func (d *dropIter) skip() {
+	d.tombstone = nil
 	for d.src.Valid() {
-		user, _, kind, err := ikey.Parse(d.src.Key())
+		user, seq, kind, err := ikey.Parse(d.src.Key())
 		if err != nil {
 			d.err = err
 			return
@@ -86,6 +106,13 @@ func (d *dropIter) skip() {
 		if kind == ikey.KindDelete && d.dropDeletes {
 			d.src.Next()
 			continue
+		}
+		if kind == ikey.KindPut && d.filter != nil && d.filter(user, d.src.Value()) {
+			if d.dropDeletes {
+				d.src.Next()
+				continue
+			}
+			d.tombstone = ikey.Append(nil, user, seq, ikey.KindDelete)
 		}
 		return
 	}
@@ -181,7 +208,9 @@ func (db *DB) compact(inputs []*table, includesOldest bool) (*table, error) {
 	defer merged.Close()
 
 	number := db.nextFile.Add(1) - 1
-	meta, err := db.writeCompacted(number, newDropIter(merged, includesOldest), smallestSeq, largestSeq)
+	drop := newDropIter(merged, includesOldest)
+	drop.filter = db.opts.CompactionFilter
+	meta, err := db.writeCompacted(number, drop, smallestSeq, largestSeq)
 	if err != nil {
 		return nil, err
 	}

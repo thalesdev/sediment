@@ -3,6 +3,7 @@
 package shale
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -109,6 +110,31 @@ func TestDropIter(t *testing.T) {
 		}
 		assertEntries(t, drainDrop(t, newDropIter(newSliceSource(entries...), true)), []entry{{"a", 3, put, "a3"}, {"c", 7, put, "c7"}})
 		assertEntries(t, drainDrop(t, newDropIter(newSliceSource(entries...), false)), []entry{{"a", 3, put, "a3"}, {"b", 9, del, ""}, {"c", 7, put, "c7"}})
+	})
+
+	t.Run("Should drop a put that the filter rejects when it drops deletes", func(t *testing.T) {
+		src := newSliceSource(entry{"a", 9, put, "x"}, entry{"a", 5, put, "old"}, entry{"b", 4, put, "keep"})
+		d := newDropIter(src, true)
+		d.filter = func(key, value []byte) bool { return string(key) == "a" }
+		assertEntries(t, drainDrop(t, d), []entry{{"b", 4, put, "keep"}})
+	})
+
+	t.Run("Should turn a put that the filter rejects into a delete when it keeps deletes", func(t *testing.T) {
+		src := newSliceSource(entry{"a", 9, put, "x"}, entry{"a", 5, put, "old"}, entry{"b", 4, put, "keep"})
+		d := newDropIter(src, false)
+		d.filter = func(key, value []byte) bool { return string(key) == "a" }
+		assertEntries(t, drainDrop(t, d), []entry{{"a", 9, del, ""}, {"b", 4, put, "keep"}})
+	})
+
+	t.Run("Should not call the filter for a delete or an older version", func(t *testing.T) {
+		src := newSliceSource(entry{"a", 9, del, ""}, entry{"a", 5, put, "old"}, entry{"b", 4, put, "keep"})
+		d := newDropIter(src, false)
+		var seen []string
+		d.filter = func(key, value []byte) bool { seen = append(seen, string(key)+"="+string(value)); return false }
+		assertEntries(t, drainDrop(t, d), []entry{{"a", 9, del, ""}, {"b", 4, put, "keep"}})
+		if fmt.Sprint(seen) != "[b=keep]" {
+			t.Fatalf("the filter saw %v", seen)
+		}
 	})
 
 	t.Run("Should be empty when it drops everything", func(t *testing.T) {
@@ -873,5 +899,28 @@ func TestOpenSeqRanges(t *testing.T) {
 			v.LastSeq = v.Tables[0][len(v.Tables[0])-1].LargestSeq - 1
 		})
 		assertOpenFails(t, dir, manifest.ErrCorrupt)
+	})
+}
+
+func TestCompactionFilter(t *testing.T) {
+	t.Parallel()
+	t.Run("Should drop the keys that the filter rejects and keep the rest", func(t *testing.T) {
+		opts := smallOptions()
+		opts.CompactionFilter = func(key, value []byte) bool { return bytes.HasPrefix(key, []byte("exp")) }
+		db := openDB(t, t.TempDir(), opts)
+		defer db.Close()
+		mustPut(t, db, "exp1", "gone")
+		mustPut(t, db, "live1", "stay")
+		next := 0
+		fillUntilTables(t, db, &next, 4)
+		awaitCompactions(t, db, 1)
+		waitIdle(t, db)
+		if _, err := db.Get([]byte("exp1")); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("Get(exp1) = %v, want ErrNotFound", err)
+		}
+		if v, err := db.Get([]byte("live1")); err != nil || string(v) != "stay" {
+			t.Fatalf("Get(live1) = %q, %v", v, err)
+		}
+		checkSeqInvariant(t, db)
 	})
 }
