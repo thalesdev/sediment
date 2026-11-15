@@ -8,6 +8,24 @@ two `Sync` rows.
 Run it with `make bench-compare` (`BENCHCOUNT=10` for `benchstat`). These
 benchmarks need a fixed count, so use `-benchtime=Nx`, as the Makefile does.
 
+## How to read the comparisons with Redis
+
+Two different questions, and the tables of this file answer them separately.
+
+- **How much does a request cost?** The fair comparison is one core against one core, and the
+  CPU per command (the section "Per core"). The measure in that section was taken before the
+  skiplist without a lock and the cache of blocks, and with one core Redis spent 2 to 6 times
+  less CPU per command than sediment.
+- **How much does a machine give?** The comparison is the total rate with all the cores. Redis
+  runs its commands on one thread, so a win of sediment over it in this sense is a win of using
+  more cores (4 to 9 busy cores, against 1) and not of doing less work per request. Against Redis
+  with `--io-threads 4`, which used 2.4 to 2.9 cores, sediment was behind at every pipeline depth
+  in the same section.
+
+So "sediment is faster than Redis" is true only for the first column of the second question, and
+it should not be quoted alone. The strength that is real is that sediment gets more from free
+cores. The weakness that is also real is the CPU per command.
+
 ## Machine
 
 Apple M3 Pro, 11 cores, 18 GiB, SSD (APFS), macOS 27.2, Go 1.25.6. One `write(2)`
