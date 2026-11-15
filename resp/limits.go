@@ -52,11 +52,11 @@ type Limits struct {
 
 // DefaultLimits returns the default limits.
 func DefaultLimits() Limits {
-	return Limits{}.withDefaults()
+	return Limits{}.WithDefaults()
 }
 
-// withDefaults returns l with the default in each field that is not set.
-func (l Limits) withDefaults() Limits {
+// WithDefaults returns l with the default in each field that is not set.
+func (l Limits) WithDefaults() Limits {
 	if l.MaxBulk <= 0 {
 		l.MaxBulk = DefaultMaxBulk
 	}

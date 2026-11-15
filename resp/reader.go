@@ -35,13 +35,13 @@ type Reader struct {
 // NewReader returns a Reader that reads from r with the limits l. A field of l
 // that is not set takes its default.
 func NewReader(r io.Reader, l Limits) *Reader {
-	return &Reader{br: bufio.NewReaderSize(r, readerBufferSize), limits: l.withDefaults()}
+	return &Reader{br: bufio.NewReaderSize(r, readerBufferSize), limits: l.WithDefaults()}
 }
 
 // SetLimits changes the limits of the Reader. A field that is not set takes its
 // default. The server uses it to apply tighter limits until a client signs in.
 func (r *Reader) SetLimits(l Limits) {
-	r.limits = l.withDefaults()
+	r.limits = l.WithDefaults()
 }
 
 // Buffered returns the number of bytes that the Reader has read from its source
@@ -49,6 +49,15 @@ func (r *Reader) SetLimits(l Limits) {
 // answers pipelined commands can flush its output.
 func (r *Reader) Buffered() int {
 	return r.br.Buffered()
+}
+
+// Wait blocks until at least one byte is ready to read, or until the input ends
+// or fails. It reads nothing from the caller's point of view. A server calls it
+// to wait for the first byte of a command with an idle timeout, and then reads
+// the command with a shorter one.
+func (r *Reader) Wait() error {
+	_, err := r.br.Peek(1)
+	return err
 }
 
 // ReadCommand reads one command of a client. A command is an array of bulk
