@@ -356,3 +356,18 @@ Splitting the CPU of each server with `ps` (user and system), with one core each
   costs 0.17 to 0.31 us per command, the engine 1.15 us for a `SET`, 0.53 us for a
   `GET` from the memtable and 2.2 us for a `GET` from a table. The `pread` is 1.7 us of
   the `GET` from a table.
+
+### What a skiplist in an arena with no lock can win
+
+Two ceilings, measured before writing it (Apple M3 Pro, 11 cores).
+
+- The lock on reads. Seeks in a skiplist of 100,000 keys with 11 goroutines take about
+  120 ns each (wall time) with the `RWMutex` of the iterator, and about 55 ns with no lock
+  at all (`BenchmarkSeekParallel` and `BenchmarkSeekParallelNoLock`, nobody writes in the
+  second one so it is safe). One goroutine takes 345 ns, so with the lock the reads scale
+  3.1 times on 11 cores, and without it 6.3 times.
+- The garbage collector on writes. A `SET` through the connection loop with a memtable of
+  64 MiB and one core (`go test -cpu 1`, `BenchmarkInprocSetShale`) takes 2,265 to 2,365 ns
+  with `GOGC=100`, about 1,900 ns with `GOGC=400` and 1,763 to 1,895 ns with `GOGC=off`.
+  The collector is about 19% of the time of a write. With 11 cores it runs on other cores
+  and the wall time does not show it (1,521 to 1,668 ns against 1,448 to 1,667 ns).

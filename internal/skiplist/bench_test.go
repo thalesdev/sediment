@@ -82,3 +82,21 @@ func BenchmarkSeekParallel(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkSeekParallelNoLock(b *testing.B) {
+	const n = 100000
+	l := benchList(b, n)
+	targets := make([][]byte, 1024)
+	for i := range targets {
+		targets[i] = key(rand.IntN(n))
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			_ = l.findGreaterOrEqual(targets[i%len(targets)], nil)
+			i++
+		}
+	})
+}
