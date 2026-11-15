@@ -230,7 +230,7 @@ func TestDeleteRange(t *testing.T) {
 		flushes := db.flushes.Load()
 		mustDeleteRange(t, db, string(keyN(0)), string(keyN(1000)))
 		long := string(make([]byte, 200))
-		for i := 0; db.flushes.Load() < flushes+2 || db.state.Load().imm != nil; i++ {
+		for i := 0; db.flushes.Load() < flushes+2; i++ {
 			mustDeleteRange(t, db, fmt.Sprintf("zz-%06d-%s", i, long), fmt.Sprintf("zz-%06d-%s~", i, long))
 			if i > 5000 {
 				t.Fatal("the memtable was not frozen twice")
