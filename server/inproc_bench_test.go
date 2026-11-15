@@ -111,7 +111,8 @@ func shaleStoreCache(b *testing.B, keys int, memtable, cache int) command.Store 
 	b.Cleanup(func() { db.Close() })
 	var batch shale.Batch
 	for i := range keys {
-		batch.Put(fmt.Appendf(nil, "key:%012d", i), benchValue)
+		k, v := command.EncodeString(fmt.Appendf(nil, "key:%012d", i), benchValue)
+		batch.Put(k, v)
 		if batch.Len() == 1000 {
 			if err := db.Write(&batch); err != nil {
 				b.Fatal(err)

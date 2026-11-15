@@ -140,7 +140,7 @@ func setnx(env *Env, _ *Client, args [][]byte) resp.Value {
 	}
 	stripe := env.Locks.Lock(key)
 	defer env.Locks.Unlock(stripe)
-	if _, _, err := env.load(key); err == nil {
+	if _, err := env.loadRecord(key); err == nil {
 		return resp.Integer(0)
 	} else if !isNotFound(err) {
 		return env.storageError("setnx", err)
@@ -185,7 +185,7 @@ func getdel(env *Env, _ *Client, args [][]byte) resp.Value {
 	if err != nil {
 		return env.storageError("getdel", err)
 	}
-	if err := env.Store.Delete(key); err != nil {
+	if err := env.Store.Delete(keyOf(key)); err != nil {
 		return env.storageError("getdel", err)
 	}
 	return resp.Bulk(old)

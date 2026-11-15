@@ -91,22 +91,33 @@ func set(env *Env, _ *Client, args [][]byte) resp.Value {
 	}
 	stripe := env.Locks.Lock(key)
 	defer env.Locks.Unlock(stripe)
-	old, oldDeadline, err := env.load(key)
+	rec, err := env.loadRecord(key)
 	found := err == nil
 	if err != nil && !isNotFound(err) {
 		return env.storageError("set", err)
 	}
+	if wantOld && found && rec.typ != typeString {
+		return replyWrongType
+	}
 	if (nx && found) || (xx && !found) {
-		return oldReply(wantOld, found, old)
+		return oldReply(wantOld, found, rec.body)
 	}
 	if keepTTL && found {
-		deadline = oldDeadline
+		deadline = rec.deadline
 	}
-	if err := env.save(key, value, deadline); err != nil {
+	if found && rec.typ != typeString {
+		var batch shale.Batch
+		batchDelete(&batch, key, rec)
+		batchPut(&batch, key, value, deadline)
+		err = env.Store.Write(&batch)
+	} else {
+		err = env.save(key, value, deadline)
+	}
+	if err != nil {
 		return env.storageError("set", err)
 	}
 	if wantOld {
-		return oldReply(true, found, old)
+		return oldReply(true, found, rec.body)
 	}
 	return replyOK
 }
@@ -155,13 +166,14 @@ func del(env *Env, _ *Client, args [][]byte) resp.Value {
 			continue
 		}
 		seen[string(k)] = struct{}{}
-		if _, _, err := env.load(k); err != nil {
+		rec, err := env.loadRecord(k)
+		if err != nil {
 			if isNotFound(err) {
 				continue
 			}
 			return env.storageError("del", err)
 		}
-		batch.Delete(k)
+		batchDelete(&batch, k, rec)
 		removed++
 	}
 	if batch.Len() == 0 {
@@ -180,7 +192,7 @@ func exists(env *Env, _ *Client, args [][]byte) resp.Value {
 		if bad, ok := env.checkKey(k); !ok {
 			return bad
 		}
-		if _, _, err := env.load(k); err == nil {
+		if _, err := env.loadRecord(k); err == nil {
 			n++
 		} else if !isNotFound(err) {
 			return env.storageError("exists", err)
@@ -197,14 +209,16 @@ func mget(env *Env, _ *Client, args [][]byte) resp.Value {
 		if bad, ok := env.checkKey(k); !ok {
 			return bad
 		}
-		v, _, err := env.load(k)
+		rec, err := env.loadRecord(k)
 		switch {
+		case err == nil && rec.typ != typeString:
+			out = append(out, resp.Null())
 		case err == nil:
-			total += len(v)
+			total += len(rec.body)
 			if env.MaxReply > 0 && total > env.MaxReply {
 				return replyReplyBig
 			}
-			out = append(out, resp.Bulk(v))
+			out = append(out, resp.Bulk(rec.body))
 		case isNotFound(err):
 			out = append(out, resp.Null())
 		default:

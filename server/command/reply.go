@@ -18,6 +18,7 @@ var (
 	replyReplyBig  = resp.Error("ERR reply is too large")
 	replyStorage   = resp.Error("ERR storage error")
 	replyNoAuthYet = resp.Error("NOAUTH Authentication required.")
+	replyWrongType = resp.Error("WRONGTYPE Operation against a key holding the wrong kind of value")
 )
 
 // isNotFound reports whether err says that a key does not exist.
@@ -33,6 +34,9 @@ func WrongArgs(name string) resp.Value {
 // storageError logs err and returns a reply that does not tell the client what
 // went wrong inside. The engine error can hold file names.
 func (e *Env) storageError(command string, err error) resp.Value {
+	if errors.Is(err, errWrongType) {
+		return replyWrongType
+	}
 	if e.Log != nil {
 		e.Log.Error("storage error", "command", command, "err", err)
 	}

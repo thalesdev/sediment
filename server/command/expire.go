@@ -86,13 +86,14 @@ func expireHandler(name string, unit int64, absolute bool) Handler {
 
 		stripe := env.Locks.Lock(key)
 		defer env.Locks.Unlock(stripe)
-		value, current, err := env.load(key)
+		rec, err := env.loadRecord(key)
 		if isNotFound(err) {
 			return resp.Integer(0)
 		}
 		if err != nil {
 			return env.storageError(name, err)
 		}
+		current := rec.deadline
 		hasTTL := current != 0
 		if (nx && hasTTL) || (xx && !hasTTL) {
 			return resp.Integer(0)
@@ -111,12 +112,13 @@ func expireHandler(name string, unit int64, absolute bool) Handler {
 			return resp.Integer(0)
 		}
 		if past {
-			if err := env.Store.Delete(key); err != nil {
+			if err := env.deleteRecord(key, rec); err != nil {
 				return env.storageError(name, err)
 			}
 			return resp.Integer(1)
 		}
-		if err := env.save(key, value, target); err != nil {
+		rec.deadline = target
+		if err := env.saveRecord(key, rec); err != nil {
 			return env.storageError(name, err)
 		}
 		return resp.Integer(1)
@@ -130,13 +132,14 @@ func ttlHandler(name string, unit int64, absolute bool) Handler {
 		if bad, ok := env.checkKey(args[1]); !ok {
 			return bad
 		}
-		_, deadline, err := env.load(args[1])
+		rec, err := env.loadRecord(args[1])
 		if isNotFound(err) {
 			return resp.Integer(-2)
 		}
 		if err != nil {
 			return env.storageError(name, err)
 		}
+		deadline := rec.deadline
 		if deadline == 0 {
 			return resp.Integer(-1)
 		}
@@ -156,14 +159,15 @@ func persist(env *Env, _ *Client, args [][]byte) resp.Value {
 	}
 	stripe := env.Locks.Lock(key)
 	defer env.Locks.Unlock(stripe)
-	value, deadline, err := env.load(key)
-	if isNotFound(err) || (err == nil && deadline == 0) {
+	rec, err := env.loadRecord(key)
+	if isNotFound(err) || (err == nil && rec.deadline == 0) {
 		return resp.Integer(0)
 	}
 	if err != nil {
 		return env.storageError("persist", err)
 	}
-	if err := env.save(key, value, 0); err != nil {
+	rec.deadline = 0
+	if err := env.saveRecord(key, rec); err != nil {
 		return env.storageError("persist", err)
 	}
 	return resp.Integer(1)

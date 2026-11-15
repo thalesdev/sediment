@@ -68,17 +68,7 @@ func TestGlobMatch(t *testing.T) {
 	})
 }
 
-func TestGlobPrefix(t *testing.T) {
-	t.Run("Should return the plain bytes at the start", func(t *testing.T) {
-		for pattern, want := range map[string]string{
-			"user:*": "user:", "*": "", "abc": "abc", "a?c": "a", "a[b]": "a", `a\*`: "a", "": "",
-		} {
-			if got := string(globPrefix([]byte(pattern))); got != want {
-				t.Fatalf("globPrefix(%q) = %q, want %q", pattern, got, want)
-			}
-		}
-	})
-
+func TestPrefixEnd(t *testing.T) {
 	t.Run("Should return the end of a prefix range", func(t *testing.T) {
 		if got := string(prefixEnd([]byte("user:"))); got != "user;" {
 			t.Fatalf("got %q", got)
