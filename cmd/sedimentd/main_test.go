@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/thalesdev/sediment/resp"
+	"github.com/thalesdev/sediment/server/acl"
 )
 
 func buildBinary(t *testing.T) string {
@@ -274,4 +276,47 @@ func mustParse(t *testing.T, der []byte) *x509.Certificate {
 		t.Fatal(err)
 	}
 	return c
+}
+
+func TestHashPassword(t *testing.T) {
+	t.Run("Should print a hash that the ACL file accepts", func(t *testing.T) {
+		var out bytes.Buffer
+		if err := hashPassword(strings.NewReader("s3cret\n"), &out); err != nil {
+			t.Fatal(err)
+		}
+		hash := strings.TrimSpace(out.String())
+		if !strings.HasPrefix(hash, "$pbkdf2-sha256$") {
+			t.Fatalf("got %q", hash)
+		}
+		path := filepath.Join(t.TempDir(), "users.acl")
+		if err := os.WriteFile(path, []byte("user u on "+hash+" +@all\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		reg, _, err := acl.Load(path, acl.ParseOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reg.Authenticate("u", []byte("s3cret")) || reg.Authenticate("u", []byte("s3cret\n")) {
+			t.Fatal("the hash does not match the password")
+		}
+	})
+
+	t.Run("Should refuse an empty or a long password", func(t *testing.T) {
+		if err := hashPassword(strings.NewReader("\n"), io.Discard); err == nil {
+			t.Fatal("an empty password was hashed")
+		}
+		if err := hashPassword(strings.NewReader(strings.Repeat("a", 2000)), io.Discard); err == nil {
+			t.Fatal("a long password was hashed")
+		}
+	})
+
+	t.Run("Should work as a subcommand", func(t *testing.T) {
+		var out bytes.Buffer
+		if err := run([]string{"hash-password"}, strings.NewReader("pw"), &out, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(out.String(), "$pbkdf2-sha256$") {
+			t.Fatalf("got %q", out.String())
+		}
+	})
 }

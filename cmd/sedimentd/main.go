@@ -4,6 +4,11 @@
 // RESP2 and RESP3 listener.
 //
 //	sedimentd [-config file] [-dir dir] [-bind address] [-port port] [-aclfile file]
+//	sedimentd hash-password
+//
+// The second form reads a password from standard input, without the final line
+// break, and prints its hash for the ACL file. The password never goes in an
+// argument, because arguments show in the process list.
 //
 // The server listens on 127.0.0.1 only, with no TLS and no users, unless the
 // settings say otherwise. It refuses to listen on an address that other machines
@@ -12,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -45,7 +51,7 @@ const shutdownTimeout = 30 * time.Second
 
 // main runs the server and exits with 1 on an error.
 func main() {
-	if err := run(os.Args[1:], os.Stderr); err != nil {
+	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "sedimentd:", err)
 		os.Exit(1)
 	}
@@ -148,8 +154,35 @@ func newLogger(w io.Writer, level string) *slog.Logger {
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: l}))
 }
 
+// maxPassword is the longest password that hash-password reads, in bytes.
+const maxPassword = 1 << 10
+
+// hashPassword reads a password from in and writes its hash to out.
+func hashPassword(in io.Reader, out io.Writer) error {
+	pw, err := io.ReadAll(io.LimitReader(in, maxPassword+1))
+	if err != nil {
+		return err
+	}
+	pw = bytes.TrimSuffix(bytes.TrimSuffix(pw, []byte("\n")), []byte("\r"))
+	if len(pw) == 0 {
+		return errors.New("the password is empty")
+	}
+	if len(pw) > maxPassword {
+		return fmt.Errorf("the password is longer than %d bytes", maxPassword)
+	}
+	hash, err := acl.HashPassword(pw)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, hash)
+	return err
+}
+
 // run starts the server and blocks until it stops.
-func run(args []string, stderr io.Writer) error {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if len(args) == 1 && args[0] == "hash-password" {
+		return hashPassword(stdin, stdout)
+	}
 	cfg, showVersion, err := loadConfig(args, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
