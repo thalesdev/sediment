@@ -72,8 +72,12 @@ closes the connection, so that a web page cannot talk to the server.
 | `SETRANGE`, `GETRANGE` | [ ] | |
 | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` | [x] | With `NX`, `XX`, `GT` and `LT`. A time in the past deletes the key. |
 | `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME`, `PERSIST` | [x] | |
-| `KEYS`, `SCAN`, `DBSIZE`, `RANDOMKEY` | [ ] | Need iterators in the engine. |
-| `MULTI`, `EXEC`, `WATCH` | [ ] | Need snapshots. |
+| `SCAN` | [x] | `MATCH`, `COUNT` and `TYPE`. A call looks at up to `COUNT` keys, and `COUNT` is at most 10000. A cursor resumes after the last key that the call looked at, it belongs to the connection, and a connection keeps its 32 newest cursors. An old or foreign cursor is `ERR invalid cursor`. A key that stays in the database for the whole scan is returned. Expired keys are hidden. |
+| `KEYS` | [x] | `@dangerous` and slow: it reads every key that the pattern can match. The reply has a size limit. |
+| `DBSIZE` | [x] | Slow: it counts the live keys, so it reads all of them. |
+| `RANDOMKEY` | [x] | The first live key after a random point, so a key after a large gap is more likely. |
+| `TYPE` | [x] | `string` or `none`. |
+| `MULTI`, `EXEC`, `WATCH` | [ ] | Need snapshots that live across commands. A snapshot pins the table files, so the server does not hold one between commands. |
 | `SUBSCRIBE`, `PUBLISH` | [ ] | |
 | Lists, hashes, sets, sorted sets, streams | [ ] | Not planned for now. |
 | `EVAL`, `FUNCTION`, `MODULE`, `DEBUG`, `REPLICAOF`, `SLAVEOF` | never | The source of most Redis CVEs. |
@@ -108,7 +112,8 @@ in gets the smaller pre-sign-in limits.
 | Bytes of one command | 32 MiB | 4 KiB |
 | Inline line | 64 KiB | 2 KiB |
 | Key | 64 KiB | |
-| Reply of `MGET` | 64 MiB | |
+| Reply of `MGET`, `KEYS` and a page of `SCAN` | 64 MiB | |
+| `COUNT` of `SCAN` | 10000 | |
 | Nesting of a value | 32 | 4 |
 | Clients | 10000 | |
 | Idle client | 10 min | 30 s |

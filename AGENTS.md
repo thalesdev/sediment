@@ -65,18 +65,19 @@ change the code near them.
 - A write returns only after its record is in the log (and flushed, with
   `Options.Sync`). The memtable is updated after the log, and the sequence number
   is published last.
-- A table is closed and removed only when the last read that uses it ends.
+- A table is closed and removed only when the last read that uses it ends. A snapshot and an iterator are reads that last: each holds a read state and a sequence number, takes the state before the sequence number as `Get` does, and gives the state back in `Release` or `Close`. Close them before `DB.Close`.
 
 ## Layout
 
 | Path | What it holds |
 |---|---|
-| `internal/shale` | The engine: `DB`, recovery, flush, compaction, group commit |
+| `internal/shale` | The engine: `DB`, snapshots, iterators, recovery, flush, compaction, group commit |
+| `resp`, `server`, `server/command`, `server/acl` | The protocol, the connections, the commands and the users |
 | `internal/wal`, `sstable`, `bloom`, `skiplist`, `merge`, `manifest`, `batch`, `ikey` | The parts, one package each |
 | `compat` | goleveldb tests and the twin benchmarks |
 
 Some tests in `internal/shale` use unexported hooks in `Options` (`flushHook`,
-`compactHook`, `getHook`, `disableCompaction`) and `skipSync`. They are only for
+`compactHook`, `getHook`, `iterHook`, `disableCompaction`) and `skipSync`. They are only for
 tests. Do not use them in the engine.
 
 ## Tests that take time

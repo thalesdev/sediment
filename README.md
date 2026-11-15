@@ -32,7 +32,7 @@ that had returned survives a `kill -9`.
 |---|---|
 | Shale, the storage engine | Done: write-ahead log, memtable (a skiplist without a lock), SSTables, block cache, MANIFEST, compaction, group commit, atomic batches |
 | `resp`, the protocol | Done: RESP2 and RESP3, fuzzed, with limits on every size |
-| `sedimentd`, the RESP server | Done for strings: `GET`, `SET`, `DEL`, `EXISTS`, `MGET`, `MSET`, counters (`INCR`, `DECR`, `APPEND`, `GETDEL` and more), key expiry (`SET EX`, `EXPIRE`, `TTL`, `PERSIST`), pipelining, `HELLO 3` |
+| `sedimentd`, the RESP server | Done for strings: `GET`, `SET`, `DEL`, `EXISTS`, `MGET`, `MSET`, counters (`INCR`, `DECR`, `APPEND`, `GETDEL` and more), key expiry (`SET EX`, `EXPIRE`, `TTL`, `PERSIST`), `SCAN`, `KEYS`, pipelining, `HELLO 3` |
 | Security | TLS 1.3 and mTLS, users with an ACL file, safe defaults. Key patterns and run-time `ACL SETUSER` come later |
 | Public Go API | Not yet: Shale lives in `internal/shale` until the server shapes it |
 
