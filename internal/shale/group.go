@@ -26,18 +26,36 @@ const (
 	writeOverhead = 16
 )
 
-// writer is a Put or a Delete that waits in the queue of the DB.
+// writer is a Put, a Delete or a Batch that waits in the queue of the DB. A
+// writer with ops is a batch, and the other fields are not used.
 type writer struct {
 	kind  ikey.Kind
 	key   []byte
 	value []byte
+	ops   []batchOp
 	done  bool
 	err   error
 }
 
 // size returns the bytes that the write counts in a group.
 func (w *writer) size() int {
-	return len(w.key) + len(w.value) + writeOverhead
+	if w.ops == nil {
+		return len(w.key) + len(w.value) + writeOverhead
+	}
+	n := 0
+	for _, op := range w.ops {
+		n += len(op.key) + len(op.value) + writeOverhead
+	}
+	return n
+}
+
+// count returns the number of operations of the write, which is the number of
+// sequence numbers that it uses.
+func (w *writer) count() int {
+	if w.ops == nil {
+		return 1
+	}
+	return len(w.ops)
 }
 
 var writerPool = sync.Pool{New: func() any { return new(writer) }}
@@ -52,6 +70,12 @@ var writerPool = sync.Pool{New: func() any { return new(writer) }}
 func (db *DB) write(kind ikey.Kind, key, value []byte) error {
 	w := writerPool.Get().(*writer)
 	*w = writer{kind: kind, key: key, value: value}
+	return db.submit(w)
+}
+
+// submit queues w, waits for its group to be committed, and returns the result.
+// It puts w back in the pool.
+func (db *DB) submit(w *writer) error {
 	defer func() {
 		*w = writer{}
 		writerPool.Put(w)
@@ -81,15 +105,27 @@ func (db *DB) lead(w *writer) error {
 		return err
 	}
 	group := db.pick()
+	ops := 0
+	for _, g := range group {
+		ops += g.count()
+	}
 	first := db.lastSeq.Load() + 1
-	last := first + uint64(len(group)) - 1
+	last := first + uint64(ops) - 1
 	if last > ikey.MaxSeq {
 		db.finish(len(group), errSeqExhausted)
 		return errSeqExhausted
 	}
 	db.batch.Reset(first)
 	for _, g := range group {
-		if g.kind == ikey.KindPut {
+		if g.ops != nil {
+			for _, op := range g.ops {
+				if op.kind == ikey.KindPut {
+					db.batch.Put(op.key, op.value)
+				} else {
+					db.batch.Delete(op.key)
+				}
+			}
+		} else if g.kind == ikey.KindPut {
 			db.batch.Put(g.key, g.value)
 		} else {
 			db.batch.Delete(g.key)
@@ -103,9 +139,19 @@ func (db *DB) lead(w *writer) error {
 		err = db.log.Sync()
 	}
 	if err == nil {
-		for i, g := range group {
-			db.keyBuf = ikey.Append(db.keyBuf[:0], g.key, first+uint64(i), g.kind)
+		seq := first
+		for _, g := range group {
+			if g.ops != nil {
+				for _, op := range g.ops {
+					db.keyBuf = ikey.Append(db.keyBuf[:0], op.key, seq, op.kind)
+					mem.list.Insert(db.keyBuf, op.value)
+					seq++
+				}
+				continue
+			}
+			db.keyBuf = ikey.Append(db.keyBuf[:0], g.key, seq, g.kind)
 			mem.list.Insert(db.keyBuf, g.value)
+			seq++
 		}
 		db.lastSeq.Store(last)
 	}
