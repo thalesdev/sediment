@@ -215,9 +215,15 @@ func (db *DB) replayLog(mem *memtable, n, last uint64) (uint64, int, error) {
 		if view.Seq() <= last {
 			return 0, 0, fmt.Errorf("shale: %s: batch with sequence number %d does not follow %d: %w", name, view.Seq(), last, batch.ErrCorrupt)
 		}
+		var insertErr error
 		view.ForEach(func(seq uint64, kind ikey.Kind, key, value []byte) {
-			mem.list.Insert(ikey.Append(nil, key, seq, kind), value)
+			if insertErr == nil {
+				insertErr = mem.list.Insert(ikey.Append(nil, key, seq, kind), value)
+			}
 		})
+		if insertErr != nil {
+			return 0, 0, fmt.Errorf("shale: %s: %w", name, insertErr)
+		}
 		entries += view.Count()
 		last = view.Seq() + uint64(view.Count()) - 1
 		db.recovery.Batches++

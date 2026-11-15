@@ -8,7 +8,7 @@ import (
 	"github.com/thalesdev/sediment/internal/sstable"
 )
 
-var _ Iterator = (*skiplist.LockedIterator)(nil)
+var _ Iterator = (*skiplist.Iterator)(nil)
 
 var _ Iterator = (*sstable.Iterator)(nil)
 

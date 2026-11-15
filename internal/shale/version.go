@@ -18,7 +18,7 @@ import (
 
 // memtable is a skip list of internal keys with the data that the flush needs.
 type memtable struct {
-	list *skiplist.LockedList
+	list *skiplist.List
 
 	// wal is the number of the log file that holds the writes of the memtable.
 	wal uint64
@@ -31,7 +31,7 @@ type memtable struct {
 // newMemtable returns an empty memtable for the log file with number wal.
 func newMemtable(wal uint64) *memtable {
 	return &memtable{
-		list: skiplist.NewLockedList(ikey.Compare, uint64(time.Now().UnixNano())),
+		list: skiplist.NewList(ikey.Compare, uint64(time.Now().UnixNano())),
 		wal:  wal,
 	}
 }

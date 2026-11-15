@@ -125,7 +125,7 @@ func (c *Config) Set(key string, v []string) error {
 	case "sync":
 		return setBool(&c.Sync, key, val)
 	case "memtable-size":
-		return setInt(&c.MemtableSize, key, val, 64<<10, 1<<34)
+		return setInt(&c.MemtableSize, key, val, 64<<10, 1<<30)
 	case "maxclients":
 		return setInt(&c.MaxClients, key, val, 1, 1<<20)
 	case "timeout":

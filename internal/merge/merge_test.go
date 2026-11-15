@@ -363,7 +363,7 @@ func buildTable(t *testing.T, entries []kv) *sstable.Iterator {
 func TestIteratorRealSources(t *testing.T) {
 	t.Run("Should merge a skip list and two tables in order of priority", func(t *testing.T) {
 		const n = 300
-		list := skiplist.NewLockedList(bytes.Compare, 1)
+		list := skiplist.NewList(bytes.Compare, 1)
 		var mid, old, want []kv
 		first := map[int]int{}
 		for i := range n {

@@ -170,7 +170,7 @@ func (db *DB) cleanup(frozen *memtable) error {
 // the file and the directory, and returns the description of the table, with the
 // range of sequence numbers that the entries have. The list must not be empty
 // and must not change.
-func (db *DB) writeTable(list *skiplist.LockedList, number uint64) (manifest.TableMeta, error) {
+func (db *DB) writeTable(list *skiplist.List, number uint64) (manifest.TableMeta, error) {
 	path := filepath.Join(db.dir, tableName(number))
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {

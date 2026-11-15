@@ -5,6 +5,11 @@ package shale
 // defaultMemtableSize is the memtable size when Options.MemtableSize is 0.
 const defaultMemtableSize = 4 << 20
 
+// maxMemtableSize is the largest memtable size. A memtable keeps its nodes, keys and
+// values in 4 GiB of blocks at most, and a larger limit could leave a write with no
+// room after it is in the log.
+const maxMemtableSize = 1 << 30
+
 // Options sets the parameters of a DB. The zero value is valid.
 type Options struct {
 	// Sync makes each write flush the write-ahead log to stable storage
@@ -19,7 +24,7 @@ type Options struct {
 	// MemtableSize is the size in bytes at which the DB freezes the memtable
 	// and writes it to a table in the background. The default is 4 MiB. The
 	// size is an estimate. A write that makes the memtable larger is not
-	// refused, and the next write starts the flush.
+	// refused, and the next write starts the flush. The largest size is 1 GiB.
 	MemtableSize int
 
 	// flushHook is called by the flush at the stages "table", "commit" and
@@ -47,5 +52,5 @@ func (o Options) memtableSize() int {
 	if o.MemtableSize <= 0 {
 		return defaultMemtableSize
 	}
-	return o.MemtableSize
+	return min(o.MemtableSize, maxMemtableSize)
 }

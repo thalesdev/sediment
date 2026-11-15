@@ -138,32 +138,50 @@ func (db *DB) lead(w *writer) error {
 	if err == nil && db.opts.Sync {
 		err = db.log.Sync()
 	}
+	part := "write-ahead log"
 	if err == nil {
-		seq := first
-		for _, g := range group {
-			if g.ops != nil {
-				for _, op := range g.ops {
-					db.keyBuf = ikey.Append(db.keyBuf[:0], op.key, seq, op.kind)
-					mem.list.Insert(db.keyBuf, op.value)
-					seq++
-				}
-				continue
-			}
-			db.keyBuf = ikey.Append(db.keyBuf[:0], g.key, seq, g.kind)
-			mem.list.Insert(db.keyBuf, g.value)
-			seq++
+		if err = db.insertGroup(mem, group, first); err != nil {
+			part = "memtable"
+		} else {
+			db.lastSeq.Store(last)
 		}
-		db.lastSeq.Store(last)
 	}
 
 	db.mu.Lock()
 	db.groups.Add(1)
 	db.grouped.Add(uint64(len(group)))
 	if err != nil {
-		err = db.fail("write-ahead log", err)
+		err = db.fail(part, err)
 	}
 	db.finish(len(group), err)
 	return err
+}
+
+// insertGroup adds the operations of the writes of a group to the memtable, with
+// sequence numbers that start at first. The record of the group is already in the
+// log. It returns the error of the memtable if the memtable has no room, which a
+// limit on its size makes impossible in practice, and then the DB fails and the
+// next Open reads the record from the log.
+func (db *DB) insertGroup(mem *memtable, group []*writer, first uint64) error {
+	seq := first
+	for _, g := range group {
+		if g.ops != nil {
+			for _, op := range g.ops {
+				db.keyBuf = ikey.Append(db.keyBuf[:0], op.key, seq, op.kind)
+				if err := mem.list.Insert(db.keyBuf, op.value); err != nil {
+					return err
+				}
+				seq++
+			}
+			continue
+		}
+		db.keyBuf = ikey.Append(db.keyBuf[:0], g.key, seq, g.kind)
+		if err := mem.list.Insert(db.keyBuf, g.value); err != nil {
+			return err
+		}
+		seq++
+	}
+	return nil
 }
 
 // pick returns the writes at the front of the queue that make one group. The
