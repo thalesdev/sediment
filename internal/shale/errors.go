@@ -19,5 +19,7 @@ var (
 	// open, in this process or in another one.
 	ErrLocked = errors.New("shale: database directory is locked")
 
+	errRangeDelete = errors.New("shale: range delete is not supported yet")
+
 	errSeqExhausted = errors.New("shale: sequence numbers are exhausted")
 )

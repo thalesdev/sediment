@@ -15,6 +15,13 @@ import (
 
 var errClosed = errors.New("sstable: iterator closed")
 
+// RangeDel is a range delete of a table: the key that ordered it in the writer,
+// and the end that went with it.
+type RangeDel struct {
+	Key []byte
+	End []byte
+}
+
 // Reader reads a table through an io.ReaderAt. Open loads the index and the
 // filter. The Reader reads each data block when it is needed, and checks the
 // checksum of the block.
@@ -24,8 +31,9 @@ type Reader struct {
 	size int64
 	opts Options
 
-	index  []byte
-	filter []byte
+	index     []byte
+	filter    []byte
+	rangeDels []RangeDel
 
 	indexIter blockIter
 }
@@ -65,10 +73,18 @@ func Open(src io.ReaderAt, size int64, opts Options) (*Reader, error) {
 		return nil, fmt.Errorf("sstable: index: %w", err)
 	}
 	r.indexIter = *indexIter
-	if err := r.loadFilter(metaHandle); err != nil {
+	if err := r.loadMeta(metaHandle); err != nil {
 		return nil, err
 	}
 	return r, nil
+}
+
+// RangeDels returns the range deletes of the table, in the order of their keys.
+// The slice and the bytes in it are shared by all the callers, and no one may
+// change them. It is empty for a table that has none, and for a table that
+// LevelDB wrote.
+func (r *Reader) RangeDels() []RangeDel {
+	return r.rangeDels
 }
 
 // newIndexIter returns a new iterator over the index block. Open checked the
@@ -80,9 +96,10 @@ func (r *Reader) newIndexIter() *blockIter {
 	return &it
 }
 
-// loadFilter reads the metaindex block at metaHandle, and then the filter block
-// that the metaindex names. If the table has no filter, r.filter stays nil.
-func (r *Reader) loadFilter(metaHandle blockHandle) error {
+// loadMeta reads the metaindex block at metaHandle, and then the filter block and
+// the range delete block that the metaindex names. If the table has no filter,
+// r.filter stays nil, and if it has no range deletes, r.rangeDels stays empty.
+func (r *Reader) loadMeta(metaHandle blockHandle) error {
 	meta, err := r.readBlock(metaHandle)
 	if err != nil {
 		return fmt.Errorf("sstable: reading metaindex: %w", err)
@@ -91,27 +108,69 @@ func (r *Reader) loadFilter(metaHandle blockHandle) error {
 	if err != nil {
 		return fmt.Errorf("sstable: metaindex: %w", err)
 	}
-	it.Seek([]byte(filterMetaKey))
-	if it.Err() != nil {
-		return fmt.Errorf("sstable: metaindex: %w", it.Err())
-	}
-	if !it.Valid() || string(it.Key()) != filterMetaKey {
-		return nil
-	}
-	h, err := decodeExactHandle(it.Value())
+	h, found, err := findMeta(it, filterMetaKey)
 	if err != nil {
 		return err
 	}
-	fb, err := r.readBlock(h)
-	if err != nil {
-		return fmt.Errorf("sstable: reading filter: %w", err)
+	if found {
+		fb, err := r.readBlock(h)
+		if err != nil {
+			return fmt.Errorf("sstable: reading filter: %w", err)
+		}
+		usable, err := checkFilter(fb)
+		if err != nil {
+			return fmt.Errorf("sstable: filter: %w", err)
+		}
+		if usable {
+			r.filter = fb
+		}
 	}
-	usable, err := checkFilter(fb)
+	h, found, err = findMeta(it, rangeDelMetaKey)
 	if err != nil {
-		return fmt.Errorf("sstable: filter: %w", err)
+		return err
 	}
-	if usable {
-		r.filter = fb
+	if found {
+		return r.loadRangeDels(h)
+	}
+	return nil
+}
+
+// findMeta looks for the entry called name in the metaindex, and returns the
+// handle of its block.
+func findMeta(it *blockIter, name string) (blockHandle, bool, error) {
+	it.Seek([]byte(name))
+	if it.Err() != nil {
+		return blockHandle{}, false, fmt.Errorf("sstable: metaindex: %w", it.Err())
+	}
+	if !it.Valid() || string(it.Key()) != name {
+		return blockHandle{}, false, nil
+	}
+	h, err := decodeExactHandle(it.Value())
+	return h, err == nil, err
+}
+
+// loadRangeDels reads the range delete block at h. It returns an error that wraps
+// errCorrupt if the keys are not in strictly increasing order.
+func (r *Reader) loadRangeDels(h blockHandle) error {
+	block, err := r.readBlock(h)
+	if err != nil {
+		return fmt.Errorf("sstable: reading range deletes: %w", err)
+	}
+	it, err := newBlockIter(block, r.opts.Compare)
+	if err != nil {
+		return fmt.Errorf("sstable: range deletes: %w", err)
+	}
+	var prev []byte
+	for it.SeekToFirst(); it.Valid(); it.Next() {
+		if prev != nil && r.opts.Compare(prev, it.Key()) >= 0 {
+			return corruptf("range deletes are not in strictly increasing order")
+		}
+		d := RangeDel{Key: bytes.Clone(it.Key()), End: bytes.Clone(it.Value())}
+		prev = d.Key
+		r.rangeDels = append(r.rangeDels, d)
+	}
+	if err := it.Err(); err != nil {
+		return fmt.Errorf("sstable: range deletes: %w", err)
 	}
 	return nil
 }

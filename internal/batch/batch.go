@@ -3,6 +3,7 @@
 package batch
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -12,6 +13,25 @@ import (
 
 // HeaderSize is the size in bytes of the header of a batch.
 const HeaderSize = 12
+
+// Kind is the kind of an operation of a batch. A delete and a put have the same
+// numbers as the kinds of an internal key, so a batch that has only these two is
+// the LevelDB write batch. A range delete has a number that LevelDB does not
+// know, and LevelDB refuses a batch that has one.
+type Kind uint8
+
+const (
+	// KindDelete deletes a key.
+	KindDelete Kind = Kind(ikey.KindDelete)
+
+	// KindPut sets the value of a key.
+	KindPut Kind = Kind(ikey.KindPut)
+
+	// KindRangeDelete deletes every key in a range of user keys. The key of the
+	// operation is the first key of the range, and the value is the end of the
+	// range, which is not in it.
+	KindRangeDelete Kind = 2
+)
 
 // ErrCorrupt is the base of all errors that Parse returns.
 var ErrCorrupt = errors.New("batch: corrupt batch")
@@ -33,15 +53,25 @@ func (b *Batch) Reset(seq uint64) {
 
 // Put adds an operation that sets the value of key.
 func (b *Batch) Put(key, value []byte) {
-	b.begin(ikey.KindPut, key)
+	b.begin(KindPut, key)
 	b.buf = binary.AppendUvarint(b.buf, uint64(len(value)))
 	b.buf = append(b.buf, value...)
 	b.end()
 }
 
+// DeleteRange adds an operation that deletes every key from start up to, and
+// not including, end. A range that is empty or inverted is a valid batch for no
+// reader, so the caller must not add one: Parse refuses it.
+func (b *Batch) DeleteRange(start, end []byte) {
+	b.begin(KindRangeDelete, start)
+	b.buf = binary.AppendUvarint(b.buf, uint64(len(end)))
+	b.buf = append(b.buf, end...)
+	b.end()
+}
+
 // Delete adds an operation that deletes key.
 func (b *Batch) Delete(key []byte) {
-	b.begin(ikey.KindDelete, key)
+	b.begin(KindDelete, key)
 	b.end()
 }
 
@@ -59,7 +89,7 @@ func (b *Batch) Seq() uint64 {
 }
 
 // Bytes returns the encoded batch. The slice is valid until the next call to
-// Reset, Put or Delete, and the caller must not change it.
+// Reset, Put, Delete or DeleteRange, and the caller must not change it.
 func (b *Batch) Bytes() []byte {
 	if len(b.buf) < HeaderSize {
 		b.Reset(0)
@@ -68,7 +98,7 @@ func (b *Batch) Bytes() []byte {
 }
 
 // begin starts an operation. It sets up the header if the batch has none.
-func (b *Batch) begin(kind ikey.Kind, key []byte) {
+func (b *Batch) begin(kind Kind, key []byte) {
 	if len(b.buf) < HeaderSize {
 		b.Reset(0)
 	}
@@ -93,8 +123,9 @@ type View struct {
 // Parse checks data and returns a View of it. It returns an error that wraps
 // ErrCorrupt if the header is short, if the batch has no operation, if the
 // sequence numbers go past ikey.MaxSeq, if an operation is not valid or is cut,
-// if the number of operations is not the number in the header, or if bytes
-// follow the last operation. Parse does not allocate memory from the count in
+// if the number of operations is not the number in the header, if a range
+// delete does not have its start below its end, or if bytes follow the last
+// operation. Parse does not allocate memory from the count in
 // the header.
 func Parse(data []byte) (View, error) {
 	if len(data) < HeaderSize {
@@ -133,9 +164,10 @@ func (v View) Count() int {
 }
 
 // ForEach calls fn for each operation in order. The operation number i has the
-// sequence number Seq() + i. For a delete, value is nil. The slices key and
-// value borrow the bytes of the batch, and fn must not keep them.
-func (v View) ForEach(fn func(seq uint64, kind ikey.Kind, key, value []byte)) {
+// sequence number Seq() + i. For a delete, value is nil. For a range delete, key
+// is the start and value is the end of the range. The slices key and value
+// borrow the bytes of the batch, and fn must not keep them.
+func (v View) ForEach(fn func(seq uint64, kind Kind, key, value []byte)) {
 	pos := HeaderSize
 	for i := range v.count {
 		kind, key, value, next, err := decodeOp(v.data, pos)
@@ -149,22 +181,25 @@ func (v View) ForEach(fn func(seq uint64, kind ikey.Kind, key, value []byte)) {
 
 // decodeOp reads the operation at pos in data. It returns the position after
 // the operation, or an error that wraps ErrCorrupt.
-func decodeOp(data []byte, pos int) (kind ikey.Kind, key, value []byte, next int, err error) {
+func decodeOp(data []byte, pos int) (kind Kind, key, value []byte, next int, err error) {
 	if pos >= len(data) {
 		return 0, nil, nil, 0, fmt.Errorf("%w: batch ends before the operation", ErrCorrupt)
 	}
-	kind = ikey.Kind(data[pos])
-	if kind > ikey.KindPut {
+	kind = Kind(data[pos])
+	if kind > KindRangeDelete {
 		return 0, nil, nil, 0, fmt.Errorf("%w: kind %d is not valid", ErrCorrupt, kind)
 	}
 	key, pos, err = decodeBytes(data, pos+1)
 	if err != nil {
 		return 0, nil, nil, 0, err
 	}
-	if kind == ikey.KindPut {
+	if kind == KindPut || kind == KindRangeDelete {
 		if value, pos, err = decodeBytes(data, pos); err != nil {
 			return 0, nil, nil, 0, err
 		}
+	}
+	if kind == KindRangeDelete && bytes.Compare(key, value) >= 0 {
+		return 0, nil, nil, 0, fmt.Errorf("%w: a range delete does not have its start below its end", ErrCorrupt)
 	}
 	return kind, key, value, pos, nil
 }

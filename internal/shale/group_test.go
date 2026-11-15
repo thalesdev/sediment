@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/thalesdev/sediment/internal/batch"
-	"github.com/thalesdev/sediment/internal/ikey"
 	"github.com/thalesdev/sediment/internal/wal"
 )
 
@@ -125,8 +124,8 @@ func TestGroupCommit(t *testing.T) {
 			t.Fatalf("first sequence numbers are %d and %d", records[0].Seq(), records[1].Seq())
 		}
 		seen := 0
-		records[1].ForEach(func(seq uint64, kind ikey.Kind, key, value []byte) {
-			if seq != uint64(2+seen) || kind != ikey.KindPut {
+		records[1].ForEach(func(seq uint64, kind batch.Kind, key, value []byte) {
+			if seq != uint64(2+seen) || kind != batch.KindPut {
 				t.Errorf("write %d has seq %d and kind %d", seen, seq, kind)
 			}
 			seen++
