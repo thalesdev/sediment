@@ -31,6 +31,8 @@ fuzz: ## every fuzz target for FUZZTIME each (default 10s)
 	$(GO) test ./internal/manifest -run '^$$' -fuzz '^FuzzDecode$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
 	$(GO) test ./internal/ikey -run '^$$' -fuzz '^FuzzCompare$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
 	$(GO) test ./internal/ikey -run '^$$' -fuzz '^FuzzParse$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./resp -run '^$$' -fuzz '^FuzzReadCommand$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
+	$(GO) test ./resp -run '^$$' -fuzz '^FuzzReadValue$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
 
 full: check test-full race-full compat fuzz ## everything: checks, all tests, race, compat and fuzz
 
