@@ -12,6 +12,9 @@ var (
 	// ErrClosed is the error of each method of a DB after Close.
 	ErrClosed = errors.New("shale: database closed")
 
+	// ErrReleased is the error of each method of a Snapshot after Release.
+	ErrReleased = errors.New("shale: snapshot released")
+
 	// ErrLocked is the error of Open for a directory that another DB has
 	// open, in this process or in another one.
 	ErrLocked = errors.New("shale: database directory is locked")

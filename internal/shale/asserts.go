@@ -13,3 +13,5 @@ var _ Iterator = (*skiplist.Iterator)(nil)
 var _ Iterator = (*sstable.Iterator)(nil)
 
 var _ Iterator = (*merge.Iterator)(nil)
+
+var _ Iterator = (*userIter)(nil)
