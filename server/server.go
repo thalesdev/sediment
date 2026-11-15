@@ -69,6 +69,7 @@ func New(o Options) (*Server, error) {
 		Version:         o.Version,
 		MaxKey:          o.MaxKey,
 		MaxReply:        o.MaxReply,
+		Now:             o.Now,
 		AuthDelay:       o.AuthDelay,
 		AuthDelayMax:    o.AuthDelayMax,
 		MaxAuthFailures: o.MaxAuthFailures,

@@ -120,6 +120,10 @@ type Env struct {
 	// MaxReply is the largest total size of the values in one reply.
 	MaxReply int
 
+	// Now returns the time that expiry uses. If it is nil, the time of the
+	// system is used.
+	Now func() time.Time
+
 	// AuthDelay is the wait after the first failed sign in. Each next failure
 	// doubles it, up to AuthDelayMax.
 	AuthDelay time.Duration
@@ -214,7 +218,7 @@ func (r *Registry) Specs() []*Spec {
 // NewRegistry returns a registry with all the commands of the server.
 func NewRegistry() *Registry {
 	r := &Registry{specs: make(map[string]*Spec)}
-	for _, list := range [][]*Spec{stringCommands(), connectionCommands(), metaCommands()} {
+	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), connectionCommands(), metaCommands()} {
 		for _, s := range list {
 			r.specs[s.Name] = s
 		}

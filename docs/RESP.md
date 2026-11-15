@@ -49,8 +49,7 @@ closes the connection, so that a web page cannot talk to the server.
 | Command | State | Notes |
 |---|---|---|
 | `GET` | [x] | |
-| `SET` | [x] | `NX`, `XX` and `GET`. |
-| `SET ... EX/PX/EXAT/PXAT/KEEPTTL` | [ ] | Needs a TTL in the engine. |
+| `SET` | [x] | `NX`, `XX`, `GET`, `EX`, `PX`, `EXAT`, `PXAT` and `KEEPTTL`. A plain `SET` removes the TTL. |
 | `DEL` | [x] | Many keys are one atomic write. |
 | `EXISTS` | [x] | |
 | `MGET` | [x] | The reply has a size limit. |
@@ -67,8 +66,12 @@ closes the connection, so that a web page cannot talk to the server.
 | `CONFIG SET`, `REWRITE` | [ ] | On purpose. See [SECURITY.md](../SECURITY.md). |
 | `ACL WHOAMI`, `USERS`, `LIST`, `LOAD`, `CAT` | [x] | Only for users with `@admin`. |
 | `ACL SETUSER`, `DELUSER`, `SAVE`, `GETUSER`, `LOG` | [ ] | ACL phase 2. |
-| `SETNX`, `GETSET`, `APPEND`, `STRLEN`, `INCR`, `DECR`, `SETRANGE` | [ ] | Need an atomic read-modify-write on a key. |
-| `EXPIRE`, `TTL` and the rest of the TTL family | [ ] | Need a TTL in the engine. |
+| `INCR`, `DECR`, `INCRBY`, `DECRBY` | [x] | Atomic. Overflow is an error. |
+| `APPEND`, `STRLEN` | [x] | A string is limited to 16 MiB. |
+| `SETNX`, `GETSET`, `GETDEL` | [x] | Atomic. |
+| `SETRANGE`, `GETRANGE` | [ ] | |
+| `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` | [x] | With `NX`, `XX`, `GT` and `LT`. A time in the past deletes the key. |
+| `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME`, `PERSIST` | [x] | |
 | `KEYS`, `SCAN`, `DBSIZE`, `RANDOMKEY` | [ ] | Need iterators in the engine. |
 | `MULTI`, `EXEC`, `WATCH` | [ ] | Need snapshots. |
 | `SUBSCRIBE`, `PUBLISH` | [ ] | |

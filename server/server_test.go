@@ -87,7 +87,6 @@ func TestCommands(t *testing.T) {
 		wantBulk(t, c.do("GET", "n"), "4")
 		wantError(t, c.do("SET", "n", "1", "NX", "XX"), "ERR syntax")
 		wantError(t, c.do("SET", "n", "1", "BAD"), "ERR syntax")
-		wantError(t, c.do("SET", "n", "1", "EX", "10"), "ERR expiration")
 	})
 
 	t.Run("Should count EXISTS with repeats", func(t *testing.T) {

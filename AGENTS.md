@@ -5,9 +5,9 @@ read it too. [CONTRIBUTING.md](CONTRIBUTING.md) has the rules for everyone.
 
 ## What this project is
 
-sediment is a key-value database that will speak RESP (the Redis protocol). It is
-built on Shale, an LSM storage engine in `internal/shale`. The RESP server does
-not exist yet. See [README.md](README.md) and [ROADMAP.md](ROADMAP.md).
+sediment is a key-value database that speaks RESP (the Redis protocol). It is
+built on Shale, an LSM storage engine in `internal/shale`. The RESP server is in
+`server`, with the protocol in `resp` and the commands in `server/command`. See [README.md](README.md) and [ROADMAP.md](ROADMAP.md).
 
 The module is `github.com/thalesdev/sediment`. The folder `compat` is a separate
 module with the compatibility tests and benchmarks against goleveldb.
