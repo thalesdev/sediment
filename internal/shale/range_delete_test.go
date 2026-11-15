@@ -505,3 +505,5 @@ func TestRangeDeleteCrashWindows(t *testing.T) {
 		})
 	}
 }
+
+func randSource(seed int64) *rand.Rand { return rand.New(rand.NewSource(seed)) }

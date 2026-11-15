@@ -55,6 +55,22 @@ func (s *Server) Info(section string) string {
 		line("set_batched_commands", num(s.setBatched.Load()))
 		b.WriteString("\r\n")
 	}
+	if want("persistence") {
+		st := s.env.Backup.State()
+		b.WriteString("# Persistence\r\n")
+		line("bgsave_in_progress", map[bool]string{true: "1", false: "0"}[st.Running])
+		line("lastsave", strconv.FormatInt(st.LastSave, 10))
+		status := "ok"
+		if st.LastErr != nil {
+			status = "err"
+		}
+		line("last_bgsave_status", status)
+		line("last_bgsave_time_sec", strconv.FormatInt(int64(st.LastDuration.Seconds()), 10))
+		line("last_bgsave_bytes", num(st.LastBytes))
+		line("last_bgsave_name", st.LastName)
+		line("backup_dir_set", map[bool]string{true: "1", false: "0"}[s.opts.BackupDir != ""])
+		b.WriteString("\r\n")
+	}
 	if want("shale") {
 		m := s.opts.Store.Metrics()
 		b.WriteString("# Shale\r\n")
@@ -157,6 +173,7 @@ func (s *Server) Config(pattern string) [][2]string {
 		"maxclients":         strconv.Itoa(s.opts.MaxClients),
 		"timeout":            strconv.Itoa(int(s.opts.IdleTimeout / time.Second)),
 		"sweep-interval":     strconv.Itoa(int(s.opts.SweepInterval / time.Second)),
+		"backup-dir":         s.opts.BackupDir,
 		"databases":          "1",
 		"save":               "",
 		"appendonly":         "no",

@@ -53,6 +53,9 @@ func (s nopStore) Metrics() shale.Metrics     { return shale.Metrics{} }
 func (s nopStore) Snapshot() (*shale.Snapshot, error) {
 	return nil, nil
 }
+func (s nopStore) Checkpoint(string) (shale.CheckpointInfo, error) {
+	return shale.CheckpointInfo{}, nil
+}
 func (s nopStore) NewIterator(*shale.IterOptions) (shale.Iterator, error) {
 	return nil, nil
 }

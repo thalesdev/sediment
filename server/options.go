@@ -48,6 +48,10 @@ type Options struct {
 	// is 1 minute. A negative value turns the sweeper off.
 	SweepInterval time.Duration
 
+	// BackupDir is the directory where BGSAVE puts its checkpoints. If it is empty,
+	// BGSAVE is an error.
+	BackupDir string
+
 	// MaxTxCommands is the largest number of commands that a client can queue
 	// between MULTI and EXEC. The default is 10000.
 	MaxTxCommands int

@@ -30,12 +30,13 @@ const (
 // writer is a Put, a Delete or a Batch that waits in the queue of the DB. A
 // writer with ops is a batch, and the other fields are not used.
 type writer struct {
-	kind  batch.Kind
-	key   []byte
-	value []byte
-	ops   []batchOp
-	done  bool
-	err   error
+	barrier bool
+	kind    batch.Kind
+	key     []byte
+	value   []byte
+	ops     []batchOp
+	done    bool
+	err     error
 }
 
 // size returns the bytes that the write counts in a group.
@@ -203,7 +204,7 @@ func (db *DB) pick() []*writer {
 	}
 	size := db.queue[0].size()
 	n := 1
-	for n < len(db.queue) && size+db.queue[n].size() <= limit {
+	for n < len(db.queue) && !db.queue[n].barrier && size+db.queue[n].size() <= limit {
 		size += db.queue[n].size()
 		n++
 	}

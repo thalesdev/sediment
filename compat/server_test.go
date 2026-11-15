@@ -477,3 +477,35 @@ func TestGoRedisAuth(t *testing.T) {
 		}
 	})
 }
+
+func TestGoRedisBgSave(t *testing.T) {
+	dir := t.TempDir()
+	addr := startSedimentd(t, server.Options{BackupDir: dir})
+	ctx := context.Background()
+	rdb := redis.NewClient(&redis.Options{Addr: addr})
+	defer rdb.Close()
+	if err := rdb.Set(ctx, "k", "v", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := rdb.BgSave(ctx).Result(); err != nil || got != "Background saving started" {
+		t.Fatalf("BGSAVE: %q, %v", got, err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		last, err := rdb.LastSave(ctx).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if last > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("LASTSAVE did not move")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("backup directory: %v, %v", entries, err)
+	}
+}

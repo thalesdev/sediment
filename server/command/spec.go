@@ -62,6 +62,9 @@ type Store interface {
 	// close it.
 	NewIterator(opts *shale.IterOptions) (shale.Iterator, error)
 
+	// Checkpoint makes a copy of the data in a new directory.
+	Checkpoint(dir string) (shale.CheckpointInfo, error)
+
 	// Snapshot returns a view of the keys as of now. The caller must release it.
 	Snapshot() (*shale.Snapshot, error)
 
@@ -147,6 +150,9 @@ type Env struct {
 	MaxAuthFailures int
 
 	nextID atomic.Uint64
+
+	// Backup runs BGSAVE. It can be nil, and then BGSAVE is an error.
+	Backup *Backup
 
 	// Versions counts the writes of each key for WATCH. The server wraps Store
 	// with it. It can be nil, and then WATCH never sees a change.
@@ -246,7 +252,7 @@ func (r *Registry) Specs() []*Spec {
 // NewRegistry returns a registry with all the commands of the server.
 func NewRegistry() *Registry {
 	r := &Registry{specs: make(map[string]*Spec)}
-	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), moreStringCommands(), txCommands(), connectionCommands(), metaCommands()} {
+	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), moreStringCommands(), txCommands(), persistenceCommands(), connectionCommands(), metaCommands()} {
 		for _, s := range list {
 			r.specs[s.Name] = s
 		}

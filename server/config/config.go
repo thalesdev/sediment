@@ -53,6 +53,10 @@ type Config struct {
 	// the server, 1 minute. A negative value turns it off.
 	SweepInterval time.Duration
 
+	// BackupDir is the directory where BGSAVE puts its checkpoints. If it is empty,
+	// BGSAVE is an error.
+	BackupDir string
+
 	// ReadTimeout is the time to send the rest of a command.
 	ReadTimeout time.Duration
 
@@ -143,6 +147,8 @@ func (c *Config) Set(key string, v []string) error {
 		return setSeconds(&c.Timeout, key, val, true)
 	case "sweep-interval":
 		return setSeconds(&c.SweepInterval, key, val, true)
+	case "backup-dir":
+		c.BackupDir = val
 	case "read-timeout":
 		return setSeconds(&c.ReadTimeout, key, val, false)
 	case "write-timeout":

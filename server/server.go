@@ -67,6 +67,7 @@ func New(o Options) (*Server, error) {
 	s.env = &command.Env{
 		Store:           command.WithVersions(o.Store, versions),
 		Versions:        versions,
+		Backup:          &command.Backup{Dir: o.BackupDir},
 		MaxTxCommands:   o.MaxTxCommands,
 		MaxTxBytes:      o.MaxTxBytes,
 		MaxWatch:        o.MaxWatch,
@@ -166,6 +167,7 @@ func (s *Server) accept(nc net.Conn) {
 // ctx.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.stopSweeper()
+	defer s.env.Backup.Wait()
 	s.mu.Lock()
 	s.closing.Store(true)
 	for l := range s.listeners {

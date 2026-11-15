@@ -262,6 +262,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		MaxKey:         cfg.MaxKey,
 		IdleTimeout:    cfg.Timeout,
 		SweepInterval:  cfg.SweepInterval,
+		BackupDir:      cfg.BackupDir,
 		ReadTimeout:    cfg.ReadTimeout,
 		WriteTimeout:   cfg.WriteTimeout,
 		PreAuthTimeout: cfg.PreAuthTimeout,
