@@ -23,6 +23,14 @@ type Metrics struct {
 
 	// FlushBytes is the number of bytes of the tables that the flushes wrote.
 	FlushBytes uint64
+
+	// BlockCacheHits is the number of reads of a data block that found it in the block
+	// cache, and BlockCacheMisses the number that did not.
+	BlockCacheHits, BlockCacheMisses uint64
+
+	// BlockCacheBytes is the size of the blocks in the block cache, with their
+	// overhead.
+	BlockCacheBytes int
 }
 
 // Metrics returns the counts of the DB. The write amplification is the sum of
@@ -35,6 +43,8 @@ func (db *DB) Metrics() Metrics {
 		CompactionBytesWritten: db.compactWritten.Load(),
 		FlushBytes:             db.flushBytes.Load(),
 	}
+	st := db.cache.Stats()
+	m.BlockCacheHits, m.BlockCacheMisses, m.BlockCacheBytes = st.Hits, st.Misses, st.Bytes
 	state := db.state.Load()
 	m.Tables = len(state.tables)
 	for _, t := range state.tables {

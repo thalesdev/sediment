@@ -27,6 +27,13 @@ type Options struct {
 	// refused, and the next write starts the flush. The largest size is 1 GiB.
 	MemtableSize int
 
+	// BlockCacheSize is the size in bytes of the cache of the data blocks of the tables,
+	// which all the tables of the DB share. The default is 8 MiB. A negative value
+	// turns the cache off. A cache that is large enough for the blocks that the reads
+	// use saves the read of the file, the check of the checksum and the allocation of
+	// the block for each Get that reaches a table.
+	BlockCacheSize int
+
 	// flushHook is called by the flush at the stages "table", "commit" and
 	// "cleanup". If it returns an error, the flush fails. Only the tests of the
 	// package set it.
@@ -45,6 +52,20 @@ type Options struct {
 	// disableCompaction stops the compaction. Only the tests of the package set
 	// it.
 	disableCompaction bool
+}
+
+// defaultBlockCacheSize is the size of the block cache when Options.BlockCacheSize is 0.
+const defaultBlockCacheSize = 8 << 20
+
+// blockCacheSize returns the size of the block cache, or 0 if it is off.
+func (o Options) blockCacheSize() int {
+	switch {
+	case o.BlockCacheSize < 0:
+		return 0
+	case o.BlockCacheSize == 0:
+		return defaultBlockCacheSize
+	}
+	return o.BlockCacheSize
 }
 
 // memtableSize returns the size at which the memtable is frozen.

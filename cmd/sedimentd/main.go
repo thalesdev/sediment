@@ -238,7 +238,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return err
 	}
-	db, err := shale.Open(cfg.Dir, shale.Options{Sync: cfg.Sync, MemtableSize: cfg.MemtableSize})
+	db, err := shale.Open(cfg.Dir, shale.Options{Sync: cfg.Sync, MemtableSize: cfg.MemtableSize, BlockCacheSize: cfg.BlockCacheSize})
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}

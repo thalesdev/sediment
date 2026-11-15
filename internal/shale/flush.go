@@ -135,7 +135,7 @@ func (db *DB) flush(frozen *memtable, activeLog uint64) (*table, error) {
 	if err := db.hook("table"); err != nil {
 		return nil, err
 	}
-	tbl, err := openTable(db.dir, meta)
+	tbl, err := openTable(db.dir, meta, db.cache)
 	if err != nil {
 		return nil, err
 	}

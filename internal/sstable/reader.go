@@ -230,9 +230,10 @@ func (r *Reader) mayContain(blockOffset uint64, key []byte) bool {
 // index holds a separator that is greater than the last key of the block,
 // because a separator is less than the first key of the next block.
 //
-// The slices foundKey and value are copies that the caller owns. Find reads the
-// block into a buffer from a pool and gives the buffer back, so that a lookup does
-// not allocate a whole block.
+// The slices foundKey and value are copies that the caller owns. If Options.Cache is
+// set, Find takes the block from the cache, or reads it, checks it and adds it to the
+// cache. If not, it reads the block into a buffer from a pool and gives the buffer
+// back, so that a lookup does not allocate a whole block.
 func (r *Reader) Find(key []byte) (foundKey, value []byte, found bool, err error) {
 	index := r.newIndexIter()
 	index.Seek(key)
@@ -246,6 +247,16 @@ func (r *Reader) Find(key []byte) (foundKey, value []byte, found bool, err error
 	if !r.mayContain(h.offset, r.opts.FilterKey(key)) {
 		return nil, nil, false, nil
 	}
+	if cache := r.opts.Cache; cache != nil {
+		block, ok := cache.get(r.opts.CacheID, h.offset)
+		if !ok {
+			if block, err = r.readBlock(h); err != nil {
+				return nil, nil, false, err
+			}
+			cache.put(r.opts.CacheID, h.offset, block)
+		}
+		return r.findInBlock(block, key)
+	}
 	pooled := blockPool.Get().(*[]byte)
 	block, backing, err := r.readBlockBuf(h, *pooled)
 	defer func() {
@@ -257,6 +268,12 @@ func (r *Reader) Find(key []byte) (foundKey, value []byte, found bool, err error
 	if err != nil {
 		return nil, nil, false, err
 	}
+	return r.findInBlock(block, key)
+}
+
+// findInBlock returns copies of the first entry of block with a key that is greater than
+// or equal to key. The block has the checksum checked and the caller does not change it.
+func (r *Reader) findInBlock(block, key []byte) (foundKey, value []byte, found bool, err error) {
 	data, err := newBlockIter(block, r.opts.Compare)
 	if err != nil {
 		return nil, nil, false, err

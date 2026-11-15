@@ -13,6 +13,7 @@ import (
 	"github.com/thalesdev/sediment/internal/batch"
 	"github.com/thalesdev/sediment/internal/ikey"
 	"github.com/thalesdev/sediment/internal/manifest"
+	"github.com/thalesdev/sediment/internal/sstable"
 	"github.com/thalesdev/sediment/internal/wal"
 )
 
@@ -45,6 +46,7 @@ func Open(dir string, opts Options) (*DB, error) {
 		dir:         dir,
 		opts:        opts,
 		lock:        lock,
+		cache:       sstable.NewBlockCache(opts.blockCacheSize()),
 		flushDone:   make(chan struct{}),
 		compactDone: make(chan struct{}),
 	}
@@ -92,7 +94,7 @@ func (db *DB) open() (err error) {
 		}
 	}
 	for _, meta := range version.Tables[0] {
-		t, err := openTable(db.dir, meta)
+		t, err := openTable(db.dir, meta, db.cache)
 		if err != nil {
 			return err
 		}
@@ -124,7 +126,7 @@ func (db *DB) open() (err error) {
 		if err != nil {
 			return err
 		}
-		t, err := openTable(db.dir, meta)
+		t, err := openTable(db.dir, meta, db.cache)
 		if err != nil {
 			return err
 		}

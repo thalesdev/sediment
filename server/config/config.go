@@ -37,6 +37,10 @@ type Config struct {
 	// small memtable makes the writes wait for the flush.
 	MemtableSize int
 
+	// BlockCacheSize is the size in bytes of the cache of data blocks of the tables. The
+	// default is 64 MiB.
+	BlockCacheSize int
+
 	// MaxClients is the largest number of connections, or 0 for the default.
 	MaxClients int
 
@@ -83,7 +87,7 @@ type Config struct {
 // Defaults returns the default settings: loopback only, port 6379, no TLS, no
 // users.
 func Defaults() Config {
-	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", MemtableSize: 64 << 20, LogLevel: "info"}
+	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", MemtableSize: 64 << 20, BlockCacheSize: 64 << 20, LogLevel: "info"}
 }
 
 // Parse reads a file of "key value" lines into c. A line that is empty or that
@@ -126,6 +130,8 @@ func (c *Config) Set(key string, v []string) error {
 		return setBool(&c.Sync, key, val)
 	case "memtable-size":
 		return setInt(&c.MemtableSize, key, val, 64<<10, 1<<30)
+	case "block-cache-size":
+		return setInt(&c.BlockCacheSize, key, val, 1<<20, 1<<34)
 	case "maxclients":
 		return setInt(&c.MaxClients, key, val, 1, 1<<20)
 	case "timeout":

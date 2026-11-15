@@ -96,7 +96,12 @@ func inproc(b *testing.B, store command.Store, verb string, space int) {
 
 func shaleStore(b *testing.B, keys int, memtable int) command.Store {
 	b.Helper()
-	db, err := shale.Open(b.TempDir(), shale.Options{MemtableSize: memtable})
+	return shaleStoreCache(b, keys, memtable, -1)
+}
+
+func shaleStoreCache(b *testing.B, keys int, memtable, cache int) command.Store {
+	b.Helper()
+	db, err := shale.Open(b.TempDir(), shale.Options{MemtableSize: memtable, BlockCacheSize: cache})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -167,4 +172,16 @@ func BenchmarkInprocSetShale50Conns(b *testing.B) {
 
 func BenchmarkInprocGetShaleTables50Conns(b *testing.B) {
 	inprocConns(b, shaleStore(b, 1000000, 1<<20), "GET", 1000000, 50)
+}
+
+func BenchmarkInprocGetShaleTablesCache8M(b *testing.B) {
+	inproc(b, shaleStoreCache(b, 1000000, 1<<20, 0), "GET", 1000000)
+}
+
+func BenchmarkInprocGetShaleTablesCacheAll(b *testing.B) {
+	inproc(b, shaleStoreCache(b, 1000000, 1<<20, 512<<20), "GET", 1000000)
+}
+
+func BenchmarkInprocGetShaleTables50ConnsCacheAll(b *testing.B) {
+	inprocConns(b, shaleStoreCache(b, 1000000, 1<<20, 512<<20), "GET", 1000000, 50)
 }

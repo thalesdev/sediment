@@ -62,6 +62,9 @@ func (s *Server) Info(section string) string {
 		line("compaction_bytes_read", num(m.CompactionBytesRead))
 		line("compaction_bytes_written", num(m.CompactionBytesWritten))
 		line("flush_bytes", num(m.FlushBytes))
+		line("block_cache_hits", num(m.BlockCacheHits))
+		line("block_cache_misses", num(m.BlockCacheMisses))
+		line("block_cache_bytes", strconv.Itoa(m.BlockCacheBytes))
 		b.WriteString("\r\n")
 	}
 	return b.String()

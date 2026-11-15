@@ -33,6 +33,12 @@ type Options struct {
 	// FilterKey returns the part of a key that goes into the bloom filter. The
 	// default is the whole key.
 	FilterKey func(key []byte) []byte
+	// Cache keeps the data blocks that Find reads. If it is nil, Find reads the block
+	// from the file each time. The Reader uses it, the Writer does not.
+	Cache *BlockCache
+	// CacheID names the table in Cache. Two tables that share a cache must have
+	// different values, and a table must not change its value.
+	CacheID uint64
 }
 
 // withDefaults returns a copy of o. Each field that has the zero value gets its

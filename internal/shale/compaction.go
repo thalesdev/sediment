@@ -192,7 +192,7 @@ func (db *DB) compact(inputs []*table, includesOldest bool) (*table, error) {
 		edit.Delete = append(edit.Delete, manifest.TableRef{Level: 0, Number: t.meta.Number})
 	}
 	if meta != nil {
-		if output, err = openTable(db.dir, *meta); err != nil {
+		if output, err = openTable(db.dir, *meta, db.cache); err != nil {
 			return nil, err
 		}
 		edit.Add = []manifest.TableMeta{*meta}
