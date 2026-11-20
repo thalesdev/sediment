@@ -10,6 +10,8 @@ import (
 	"slices"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/thalesdev/sediment/internal/ikey"
 	"github.com/thalesdev/sediment/internal/manifest"
 	"github.com/thalesdev/sediment/internal/sstable"
@@ -34,11 +36,11 @@ func (db *DB) makeRoom() error {
 			return nil
 		}
 		if state.imm != nil {
-			db.stallFlush.wait(db.cond)
+			db.stallFlush.wait(db.cond, db.lg, "flush")
 			continue
 		}
 		if !db.opts.disableCompaction && len(state.tables) >= stallTables {
-			db.stallCompaction.wait(db.cond)
+			db.stallCompaction.wait(db.cond, db.lg, "compaction")
 			continue
 		}
 		began := time.Now()
@@ -62,7 +64,7 @@ func (db *DB) freeze(state *readState) error {
 	}
 	abandon := func(err error) error {
 		f.Close()
-		os.Remove(path)
+		db.removeQuiet(path)
 		return err
 	}
 	if err := syncDir(db.dir); err != nil {
@@ -109,9 +111,19 @@ func (db *DB) flushLoop() {
 		frozen, activeLog := state.imm, state.mem.wal
 		db.mu.Unlock()
 		began := time.Now()
+		db.lg.Debug("flush started", "log", frozen.wal)
+		span := db.startSpan("shale.flush")
 		tbl, err := db.flush(frozen, activeLog)
+		if err != nil {
+			endSpan(span, err)
+		} else {
+			endSpan(span, nil, attribute.Int64("shale.table", int64(tbl.meta.Number)), attribute.Int64("shale.bytes", int64(tbl.meta.Size)))
+		}
 		db.flushes.Add(1)
 		db.flushNanos.Add(int64(time.Since(began)))
+		if err == nil {
+			db.lg.Info("flush finished", "table", tbl.meta.Number, "bytes", tbl.meta.Size, "ms", time.Since(began).Milliseconds())
+		}
 		db.mu.Lock()
 		if err != nil {
 			db.fail("flush", err)
@@ -142,7 +154,7 @@ func (db *DB) flush(frozen *memtable, activeLog uint64) (*table, error) {
 	if err := db.hook("table"); err != nil {
 		return nil, err
 	}
-	tbl, err := openTable(db.dir, meta, db.cache)
+	tbl, err := openTable(db.dir, meta, db.cache, db.lg)
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -71,15 +72,33 @@ func connect(t *testing.T, port int) (net.Conn, *resp.Reader, *resp.Writer) {
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		nc, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err == nil {
+		if err == nil && !loading(nc) {
 			t.Cleanup(func() { nc.Close() })
 			return nc, resp.NewReader(nc, resp.Limits{}), resp.NewWriter(nc)
+		}
+		if err == nil {
+			nc.Close()
+			err = fmt.Errorf("the server is loading")
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("the server did not start: %v", err)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// loading reports whether the server on nc is still loading the data set, which
+// it says in the reply to INFO.
+func loading(nc net.Conn) bool {
+	r, w := resp.NewReader(nc, resp.Limits{}), resp.NewWriter(nc)
+	_ = nc.SetDeadline(time.Now().Add(5 * time.Second))
+	defer nc.SetDeadline(time.Time{})
+	_ = w.WriteValue(resp.Array(resp.BulkString("INFO"), resp.BulkString("server")))
+	if w.Flush() != nil {
+		return true
+	}
+	v, err := r.ReadValue()
+	return err != nil || strings.Contains(string(v.Bytes), "loading:1")
 }
 
 func call(t *testing.T, nc net.Conn, r *resp.Reader, w *resp.Writer, args ...string) resp.Value {
@@ -251,8 +270,12 @@ func TestProcess(t *testing.T) {
 		deadline := time.Now().Add(10 * time.Second)
 		for {
 			nc, err = tls.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port), &tls.Config{RootCAs: pool, ServerName: "localhost"})
-			if err == nil {
+			if err == nil && !loading(nc) {
 				break
+			}
+			if err == nil {
+				nc.Close()
+				err = fmt.Errorf("the server is loading")
 			}
 			if time.Now().After(deadline) {
 				t.Fatal(err)
@@ -317,6 +340,30 @@ func TestHashPassword(t *testing.T) {
 		}
 		if !strings.HasPrefix(out.String(), "$pbkdf2-sha256$") {
 			t.Fatalf("got %q", out.String())
+		}
+	})
+}
+
+func TestProcessHealthcheck(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a process")
+	}
+	bin := buildBinary(t)
+	t.Run("Should exit 0 for a server that serves and 1 for a port that nobody serves", func(t *testing.T) {
+		port := freePort(t)
+		dir := t.TempDir()
+		p := start(t, bin, "-dir", dir, "-port", fmt.Sprint(port))
+		connect(t, port)
+		if out, err := exec.Command(bin, "healthcheck", "-port", fmt.Sprint(port)).CombinedOutput(); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		_ = p.cmd.Process.Kill()
+		_, _ = p.cmd.Process.Wait()
+		cmd := exec.Command(bin, "healthcheck", "-port", fmt.Sprint(port), "-timeout", "1s")
+		err := cmd.Run()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+			t.Fatalf("got %v, want exit code 1", err)
 		}
 	})
 }

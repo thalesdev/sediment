@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thalesdev/sediment/internal/glob"
 	"github.com/thalesdev/sediment/internal/shale"
 	"github.com/thalesdev/sediment/resp"
 	"github.com/thalesdev/sediment/server/acl"
@@ -527,7 +528,7 @@ func collScan(env *Env, cl *Client, args [][]byte, name string, typ valueType, w
 		if err != nil {
 			return env.storageError(name, err)
 		}
-		if matchAll(pattern) || globMatch(pattern, field) {
+		if matchAll(pattern) || glob.Match(pattern, field) {
 			size := len(field)
 			if withValues {
 				size += len(payload)

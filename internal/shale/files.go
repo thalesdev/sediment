@@ -149,3 +149,23 @@ func moveToLost(dir string, numbers []uint64) error {
 	}
 	return syncDir(dir)
 }
+
+// removeQuiet removes the file at path after a failed step, and logs the failure
+// to remove it. The next Open removes a file that the MANIFEST does not name.
+func (db *DB) removeQuiet(path string) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		db.lg.Warn("a file was not removed", "file", filepath.Base(path), "err", err)
+	}
+}
+
+// logRecovery logs what Open replayed from the logs, and what it cut or moved.
+func (db *DB) logRecovery() {
+	r := db.recovery
+	db.lg.Info("recovery finished", "tables", r.Tables, "logs", r.Logs, "batches", r.Batches, "last_seq", r.LastSeq)
+	if r.DroppedBytes > 0 {
+		db.lg.Warn("recovery cut bytes of the logs that were not valid", "bytes", r.DroppedBytes)
+	}
+	if r.ManifestDroppedBytes > 0 {
+		db.lg.Warn("recovery skipped bytes of the MANIFEST and moved table files to lost/", "bytes", r.ManifestDroppedBytes, "tables", r.KeptTables)
+	}
+}

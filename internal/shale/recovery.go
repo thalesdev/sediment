@@ -45,6 +45,8 @@ func Open(dir string, opts Options) (*DB, error) {
 	db := &DB{
 		dir:         dir,
 		opts:        opts,
+		lg:          opts.logger(),
+		tr:          opts.Tracer,
 		lock:        lock,
 		cache:       sstable.NewBlockCache(opts.blockCacheSize()),
 		flushDone:   make(chan struct{}),
@@ -56,6 +58,7 @@ func Open(dir string, opts Options) (*DB, error) {
 		unlockDir(lock)
 		return nil, err
 	}
+	db.logRecovery()
 	go db.flushLoop()
 	go db.compactLoop()
 	return db, nil
@@ -94,7 +97,7 @@ func (db *DB) open() (err error) {
 		}
 	}
 	for _, meta := range version.Tables[0] {
-		t, err := openTable(db.dir, meta, db.cache)
+		t, err := openTable(db.dir, meta, db.cache, db.lg)
 		if err != nil {
 			return err
 		}
@@ -126,7 +129,7 @@ func (db *DB) open() (err error) {
 		if err != nil {
 			return err
 		}
-		t, err := openTable(db.dir, meta, db.cache)
+		t, err := openTable(db.dir, meta, db.cache, db.lg)
 		if err != nil {
 			return err
 		}

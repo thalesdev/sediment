@@ -65,7 +65,7 @@ func (db *DB) freezeAndWait() error {
 		}
 		state := db.state.Load()
 		if state.imm != nil {
-			db.stallFlush.wait(db.cond)
+			db.stallFlush.wait(db.cond, db.lg, "flush")
 			continue
 		}
 		if state.mem.empty() {

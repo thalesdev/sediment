@@ -33,7 +33,7 @@ that had returned survives a `kill -9`.
 | Shale, the storage engine | Done: write-ahead log, memtable (a skiplist without a lock), SSTables, block cache, MANIFEST, compaction, group commit, atomic batches |
 | `resp`, the protocol | Done: RESP2 and RESP3, fuzzed, with limits on every size |
 | `sedimentd`, the RESP server | Done for strings, hashes and sets: the string and counter commands, key expiry (`SET EX`, `EXPIRE`, `TTL`, `PERSIST`), `HSET` and the hash commands, `SADD` and the set commands, `MULTI`, `EXEC` and `WATCH`, `SCAN` and `KEYS`, `RENAME`, `BGSAVE`, pipelining, `HELLO 3` |
-| Security | TLS 1.3 and mTLS, users with an ACL file, safe defaults. Key patterns and run-time `ACL SETUSER` come later |
+| Security | TLS 1.3 and mTLS, users with key patterns, subcommand rules and selectors, `ACL SETUSER`, `ACL LOG`, users from a client certificate, a limit of failed sign ins by address, safe defaults |
 | Public Go API | Not yet: Shale lives in `internal/shale` until the server shapes it |
 
 The commands, types and ACL features that work, and the ones that do not, are in
@@ -41,13 +41,34 @@ The commands, types and ACL features that work, and the ones that do not, are in
 
 ## Run it
 
+With a container, in one command:
+
+```bash
+docker run -p 127.0.0.1:6379:6379 -v sediment-data:/data ghcr.io/thalesdev/sediment
+```
+
+Then `redis-cli` connects to `127.0.0.1:6379`. The image has no `redis-cli`. Its
+health check is `sedimentd healthcheck`. The server inside the container listens on
+every address of the container, and the container network keeps it private, so
+publish the port on the loopback address of the host as above, and set up users and
+TLS before you publish it to a network.
+
+From the source:
+
 ```bash
 go run ./cmd/sedimentd -dir ./data
 ```
 
+Or download a build for Linux or macOS from the releases, or run `make dist`.
+
 It listens on `127.0.0.1:6379`, with no TLS and no users. It refuses to listen on
 an address that other machines reach unless it has TLS or a sign in. Settings go
 in a file with `-config`, in the style of `redis.conf`.
+
+To see inside a node: `INFO`, `CLIENT LIST`, `SLOWLOG GET`, `ACL LOG`, structured
+logs (`log-format json`, and `SIGHUP` reads `loglevel` again), a Prometheus
+endpoint (`metrics-addr`), OpenTelemetry metrics and traces over OTLP
+(`otlp-metrics`, `otlp-traces`), and `sedimentd healthcheck` for a probe.
 
 **Finish line:** `redis-cli` connects and runs `GET`, `SET` and `DEL`,
 `redis-benchmark` runs against the server, and no acknowledged write is lost

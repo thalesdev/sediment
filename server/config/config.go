@@ -44,6 +44,23 @@ type Config struct {
 	// MaxClients is the largest number of connections, or 0 for the default.
 	MaxClients int
 
+	// SlowLogSlowerThan is the time in microseconds that a command must take to enter
+	// the slow log. 0 logs every command and a negative value turns the log off.
+	// The default is 10000.
+	SlowLogSlowerThan int
+
+	// SlowLogMaxLen is the number of entries of the slow log. The default is 128.
+	SlowLogMaxLen int
+
+	// AuthFailLimit is the number of failed sign ins from one address, in the
+	// window, after which the server refuses the sign ins of that address. 0 turns
+	// the limit off. The default is 20.
+	AuthFailLimit int
+
+	// AuthFailWindow is the time that the failures of an address count for, and the
+	// time that the address stays refused. The default is 60 seconds.
+	AuthFailWindow time.Duration
+
 	// Timeout closes a client that is idle for this long. A zero value is the
 	// default of the server. A negative value turns it off.
 	Timeout time.Duration
@@ -85,18 +102,56 @@ type Config struct {
 	// ACLFile is the file of the users.
 	ACLFile string
 
+	// TLSAuthClientsUser makes a client certificate sign the client in as the user
+	// that is named like its common name, if the user has the rule certonly. It
+	// needs tls-ca-cert-file and aclfile. The default is false.
+	TLSAuthClientsUser bool
+
+	// MetricsAddr is the address of the HTTP endpoint with the metrics in the
+	// Prometheus format, host:port. If it is empty, the endpoint is off. It is the
+	// only HTTP port of the server. An address that other machines reach needs TLS,
+	// MetricsUser and MetricsPasswordHash.
+	MetricsAddr string
+
+	// MetricsUser and MetricsPasswordHash are the sign in of the endpoint of the
+	// metrics, which uses HTTP basic authentication. The hash is the one that
+	// sedimentd hash-password prints.
+	MetricsUser, MetricsPasswordHash string
+
+	// OTLPMetrics sends the metrics with OTLP over HTTP. The endpoint, the headers
+	// and the TLS settings are the standard OTEL_EXPORTER_OTLP environment
+	// variables. The default is false.
+	OTLPMetrics bool
+
+	// OTLPTraces sends the spans with OTLP over HTTP. The endpoint, the headers and
+	// the TLS settings are the standard OTEL_EXPORTER_OTLP environment variables.
+	// The default is false.
+	OTLPTraces bool
+
+	// TraceSampleRate is the part of the commands that get a span, from 0 to 1. The
+	// spans of the flush and of the compaction are rare, and always made. The
+	// default is 0.01.
+	TraceSampleRate float64
+
+	// OTLPInterval is the time between two exports of the metrics. The default is
+	// 60 seconds.
+	OTLPInterval time.Duration
+
 	// InsecureBind allows an address that is not loopback with no TLS and no
 	// sign in. The default is false.
 	InsecureBind bool
 
 	// LogLevel is debug, info, warn or error. The default is info.
 	LogLevel string
+
+	// LogFormat is text or json. The default is text.
+	LogFormat string
 }
 
 // Defaults returns the default settings: loopback only, port 6379, no TLS, no
 // users.
 func Defaults() Config {
-	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", MemtableSize: 64 << 20, BlockCacheSize: 64 << 20, LogLevel: "info"}
+	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", MemtableSize: 64 << 20, BlockCacheSize: 64 << 20, LogLevel: "info", LogFormat: "text", OTLPInterval: time.Minute, TraceSampleRate: 0.01, SlowLogSlowerThan: 10000, SlowLogMaxLen: 128, AuthFailLimit: 20, AuthFailWindow: time.Minute}
 }
 
 // Parse reads a file of "key value" lines into c. A line that is empty or that
@@ -141,6 +196,18 @@ func (c *Config) Set(key string, v []string) error {
 		return setInt(&c.MemtableSize, key, val, 64<<10, 1<<30)
 	case "block-cache-size":
 		return setInt(&c.BlockCacheSize, key, val, 1<<20, 1<<34)
+	case "slowlog-log-slower-than":
+		n, err := strconv.Atoi(val)
+		if err != nil || n < -1 || n > 1<<30 {
+			return errors.New("slowlog-log-slower-than must be -1 or a number of microseconds")
+		}
+		c.SlowLogSlowerThan = n
+	case "slowlog-max-len":
+		return setInt(&c.SlowLogMaxLen, key, val, 1, 1<<20)
+	case "auth-fail-limit":
+		return setInt(&c.AuthFailLimit, key, val, 0, 1<<20)
+	case "auth-fail-window":
+		return setSeconds(&c.AuthFailWindow, key, val, false)
 	case "maxclients":
 		return setInt(&c.MaxClients, key, val, 1, 1<<20)
 	case "timeout":
@@ -169,6 +236,31 @@ func (c *Config) Set(key string, v []string) error {
 		c.TLSCA = val
 	case "aclfile":
 		c.ACLFile = val
+	case "tls-auth-clients-user":
+		return setBool(&c.TLSAuthClientsUser, key, val)
+	case "metrics-addr":
+		if val != "" {
+			if _, _, err := net.SplitHostPort(val); err != nil {
+				return errors.New("metrics-addr must be host:port")
+			}
+		}
+		c.MetricsAddr = val
+	case "metrics-user":
+		c.MetricsUser = val
+	case "metrics-password-hash":
+		c.MetricsPasswordHash = val
+	case "otlp-metrics":
+		return setBool(&c.OTLPMetrics, key, val)
+	case "otlp-traces":
+		return setBool(&c.OTLPTraces, key, val)
+	case "trace-sample-rate":
+		f, err := strconv.ParseFloat(val, 64)
+		if err != nil || f < 0 || f > 1 || f != f {
+			return errors.New("trace-sample-rate must be a number from 0 to 1")
+		}
+		c.TraceSampleRate = f
+	case "otlp-interval":
+		return setSeconds(&c.OTLPInterval, key, val, false)
 	case "insecure-bind":
 		return setBool(&c.InsecureBind, key, val)
 	case "loglevel":
@@ -177,6 +269,13 @@ func (c *Config) Set(key string, v []string) error {
 			c.LogLevel = val
 		default:
 			return errors.New("loglevel must be debug, info, warn or error")
+		}
+	case "log-format":
+		switch val {
+		case "text", "json":
+			c.LogFormat = val
+		default:
+			return errors.New("log-format must be text or json")
 		}
 	default:
 		return fmt.Errorf("unknown setting %q", printable(key))
@@ -253,12 +352,37 @@ func (c Config) Validate() error {
 	if c.TLSCA != "" && c.TLSCert == "" {
 		return errors.New("tls-ca-cert-file needs tls-cert-file and tls-key-file")
 	}
+	if c.TLSAuthClientsUser && (c.TLSCA == "" || c.ACLFile == "") {
+		return errors.New("tls-auth-clients-user needs tls-ca-cert-file and aclfile")
+	}
+	if c.MetricsAddr != "" && c.MetricsExposed() {
+		if !c.TLSEnabled() {
+			return errors.New("metrics-addr reaches other machines, so it needs tls-cert-file and tls-key-file")
+		}
+		if c.MetricsUser == "" || c.MetricsPasswordHash == "" {
+			return errors.New("metrics-addr reaches other machines, so it needs metrics-user and metrics-password-hash")
+		}
+	}
 	for _, b := range c.Bind {
 		if b == "" {
 			return errors.New("an empty bind address")
 		}
 	}
 	return nil
+}
+
+// MetricsExposed reports whether the address of the metrics endpoint can be reached
+// from another machine. Only 127.0.0.0/8, ::1 and the name localhost cannot.
+func (c Config) MetricsExposed() bool {
+	host, _, err := net.SplitHostPort(c.MetricsAddr)
+	if err != nil {
+		return true
+	}
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip == nil || !ip.IsLoopback()
 }
 
 // Exposed reports whether any bind address can be reached from another machine.
@@ -306,6 +430,7 @@ func (c Config) Settings() map[string]string {
 		"acl":           yes(c.ACLFile != ""),
 		"max-args":      strconv.Itoa(c.MaxArgs),
 		"loglevel":      c.LogLevel,
+		"log-format":    c.LogFormat,
 		"insecure-bind": yes(c.InsecureBind),
 	}
 }

@@ -1,26 +1,33 @@
 GO ?= go
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+PLATFORMS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
-.PHONY: all build test race full test-full race-full fuzz cover bench bench-compare bench-server bench-inproc vuln fmt fmt-check vet check compat tidy clean help
+.PHONY: dist docker all build test race full test-full race-full fuzz cover bench bench-compare bench-server bench-inproc vuln fmt fmt-check vet check compat tidy clean help
 
 FUZZTIME ?= 10s
 BENCHCOUNT ?= 1
 
 all: check test ## format check, vet and the fast tests
 
-build: ## compile every package of the main module
+build: ## compile every package of the main module and of sedimentd
 	$(GO) build ./...
+	cd cmd/sedimentd && $(GO) build -o /dev/null .
 
-test: ## fast tests of the main module (-short, no kill -9)
+test: ## fast tests of the main module and of sedimentd (-short, no kill -9)
 	$(GO) test -short ./...
+	cd cmd/sedimentd && $(GO) test -short ./...
 
 race: ## fast tests with the race detector (-short)
 	$(GO) test -short -race ./...
+	cd cmd/sedimentd && $(GO) test -short -race ./...
 
 test-full: ## all the tests of the main module, also the slow ones and kill -9
 	$(GO) test -count=1 ./...
+	cd cmd/sedimentd && $(GO) test -count=1 ./...
 
 race-full: ## all the tests with the race detector
 	$(GO) test -race -count=1 ./...
+	cd cmd/sedimentd && $(GO) test -race -count=1 ./...
 
 fuzz: ## every fuzz target for FUZZTIME each (default 10s)
 	$(GO) test ./internal/sstable -run '^$$' -fuzz '^FuzzBlockIter$$' -fuzztime $(FUZZTIME) -fuzzminimizetime=0
@@ -60,25 +67,44 @@ bench-inproc: ## server cost per command without the network, with a pipeline of
 vuln: ## check the dependencies and the code for known vulnerabilities
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
 	cd compat && $(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	cd cmd/sedimentd && $(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
-fmt: ## format all Go files (main module and compat)
+fmt: ## format all Go files (every module)
 	gofmt -w .
 
 fmt-check: ## fail if any file is not formatted
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "not formatted:"; echo "$$out"; exit 1; fi
 
-vet: ## go vet on both modules
+vet: ## go vet on the three modules
 	$(GO) vet ./...
 	cd compat && $(GO) vet ./...
+	cd cmd/sedimentd && $(GO) vet ./...
 
 check: fmt-check vet ## formatting and static checks
 
 compat: ## compatibility tests against goleveldb (separate module)
 	cd compat && $(GO) test -count=1 ./...
 
-tidy: ## go mod tidy on both modules
+tidy: ## go mod tidy on the three modules
 	$(GO) mod tidy
 	cd compat && $(GO) mod tidy
+	cd cmd/sedimentd && $(GO) mod tidy
+
+dist: ## release builds of sedimentd for Linux and macOS in dist/ (VERSION, PLATFORMS)
+	rm -rf dist
+	mkdir -p dist
+	@set -e; for p in $(PLATFORMS); do \
+		os=$${p%/*}; arch=$${p#*/}; name=sedimentd_$(VERSION)_$${os}_$${arch}; \
+		mkdir -p dist/$$name; \
+		(cd cmd/sedimentd && CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ../../dist/$$name/sedimentd .); \
+		cp LICENSE README.md SECURITY.md dist/$$name/; \
+		tar -C dist -czf dist/$$name.tar.gz $$name; \
+		rm -r dist/$$name; \
+	done
+	cd dist && (sha256sum *.tar.gz 2>/dev/null || shasum -a 256 *.tar.gz) > SHA256SUMS
+
+docker: ## container image sediment:VERSION
+	docker build -t sediment:$(VERSION) --build-arg VERSION=$(VERSION) .
 
 clean:
 	rm -f coverage.out

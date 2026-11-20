@@ -65,6 +65,7 @@ func (s *Server) newConn(nc net.Conn) *conn {
 	c.client = &command.Client{
 		ID:      s.env.NextID(),
 		Addr:    nc.RemoteAddr().String(),
+		LAddr:   nc.LocalAddr().String(),
 		Proto:   2,
 		Authed:  authed,
 		User:    "default",
@@ -76,6 +77,10 @@ func (s *Server) newConn(nc net.Conn) *conn {
 // serve runs the connection until it ends. A panic ends only this connection.
 func (c *conn) serve() {
 	defer func() { _ = c.nc.Close() }()
+	c.s.opts.Log.Debug("connection opened", "client", c.client.ID, "addr", c.client.Addr)
+	defer func() {
+		c.s.opts.Log.Debug("connection closed", "client", c.client.ID, "addr", c.client.Addr, "user", printable([]byte(c.client.User), 64))
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			c.s.opts.Log.Error("connection panic", "client", c.client.ID, "panic", r, "stack", string(debug.Stack()))
@@ -88,6 +93,7 @@ func (c *conn) serve() {
 			return
 		}
 		_ = tc.SetDeadline(time.Time{})
+		c.certSignIn(tc)
 	}
 	c.loop()
 	_ = c.w.Flush()
@@ -126,7 +132,7 @@ func (c *conn) loop() {
 				return
 			}
 		}
-		if isPlainSet(args) && c.canBatchSet() {
+		if isPlainSet(args) && c.canBatchSet(args) {
 			var readErr error
 			var written bool
 			carry, readErr, written = c.batchSets(args)
@@ -173,4 +179,26 @@ func (c *conn) readFailed(err error) {
 	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		c.s.opts.Log.Debug("read failed", "client", c.client.ID, "err", err)
 	}
+}
+
+// certSignIn signs the client in as the user that the common name of its
+// certificate names, if the server has that setting and the user has the rule
+// certonly. The chain of the certificate was checked by the handshake.
+func (c *conn) certSignIn(tc *tls.Conn) {
+	a := c.s.opts.Access
+	if !c.s.opts.CertUser || a == nil {
+		return
+	}
+	certs := tc.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		return
+	}
+	cn := certs[0].Subject.CommonName
+	if !a.CertUser(cn) {
+		c.s.opts.Log.Warn("a client certificate names no user that signs in with one", "addr", c.client.Addr, "cn", printable([]byte(cn), 64))
+		return
+	}
+	c.client.SignInAs(cn)
+	c.r.SetLimits(c.s.limitsFor(true))
+	c.s.opts.Log.Info("signed in with a client certificate", "client", c.client.ID, "addr", c.client.Addr, "user", cn)
 }

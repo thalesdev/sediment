@@ -5,6 +5,7 @@ package server
 import (
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/thalesdev/sediment/resp"
 	"github.com/thalesdev/sediment/server/command"
@@ -32,12 +33,16 @@ func (c *conn) execute(args [][]byte) (reply resp.Value) {
 	}
 	if !c.client.Authed && !spec.NoAuth {
 		s.deniedCmds.Add(1)
+		s.opts.Log.Debug("command refused before sign in", "addr", c.client.Addr, "command", spec.Name)
 		return resp.Error("NOAUTH Authentication required.")
 	}
-	if s.opts.Access != nil && !spec.NoAuth && !s.opts.Access.Allowed(c.client.User, spec.Name, spec.Categories) {
-		s.deniedCmds.Add(1)
-		c.client.MarkTxDirty()
-		return resp.Error("NOPERM User " + printable([]byte(c.client.User), 64) + " has no permissions to run the '" + spec.Name + "' command")
+	if s.opts.Access != nil && !spec.NoAuth {
+		if reason := s.env.Check(c.client.User, spec, args); reason != "" {
+			s.deniedCmds.Add(1)
+			c.client.MarkTxDirty()
+			s.opts.Log.Warn("command denied", "user", printable([]byte(c.client.User), 64), "addr", c.client.Addr, "command", spec.Name, "reason", reason)
+			return s.env.Deny(c.client, spec, args, reason, "toplevel")
+		}
 	}
 	if c.client.InMulti() {
 		switch spec.Tx {
@@ -48,7 +53,15 @@ func (c *conn) execute(args [][]byte) (reply resp.Value) {
 		}
 	}
 	s.totalCommands.Add(1)
-	return spec.Handler(s.env, c.client, args)
+	start := time.Now()
+	c.client.Touch(&spec.Name, start)
+	span := s.startSpan(spec, args)
+	reply = spec.Handler(s.env, c.client, args)
+	s.observe(c.client, spec, 1, len(args)-1, reply.Kind, start, traceID(span))
+	if span != nil {
+		endSpan(span, reply)
+	}
+	return reply
 }
 
 // printable returns b cut to max bytes, with each byte that is not printable

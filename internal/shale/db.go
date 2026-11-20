@@ -5,9 +5,12 @@ package shale
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
+
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/thalesdev/sediment/internal/batch"
 	"github.com/thalesdev/sediment/internal/ikey"
@@ -38,6 +41,8 @@ import (
 type DB struct {
 	dir   string
 	opts  Options
+	lg    *slog.Logger
+	tr    trace.Tracer
 	lock  *os.File
 	cache *sstable.BlockCache
 
@@ -314,7 +319,16 @@ func (db *DB) Close() error {
 func (db *DB) fail(part string, err error) error {
 	if db.err == nil {
 		db.err = fmt.Errorf("shale: %s failed: %w", part, err)
+		db.lg.Error("the DB failed and refuses writes", "part", part, "err", err)
 	}
 	db.cond.Broadcast()
+	return db.err
+}
+
+// Err returns the error that stopped the DB, or nil if the DB works. After an error
+// the DB refuses every write. It is the signal for a health check.
+func (db *DB) Err() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
 	return db.err
 }

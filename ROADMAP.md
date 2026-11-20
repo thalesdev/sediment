@@ -57,6 +57,16 @@ Each change was made after a measurement, with the numbers in [BENCHMARKS.md](BE
   - **Transactions** (`MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`): `EXEC` locks the keys, checks the watched keys, and runs the commands in order. A reader that takes no lock can see a transaction half applied, and a crash can leave a part of it, until `EXEC` becomes one entry of the Raft log.
   - **The rest of the string and key commands**: `SETEX`, `PSETEX`, `MSETNX`, `GETEX`, `GETRANGE`, `SETRANGE`, `INCRBYFLOAT`, `UNLINK`, `RENAME`, `RENAMENX`.
   - **Online backup**: `DB.Checkpoint`, `BGSAVE` into `backup-dir`, `LASTSAVE`, and `INFO persistence`. The files are hard links, and the directory is published with a rename. To restore, copy the directory and start `sedimentd`.
+- [x] **Milestone 2: safe to run, and visible from the inside.**
+  - **ACL phase 2**: key patterns (`~pattern`, `%R~`, `%W~`, `allkeys`, `resetkeys`), checked in `execute`, for each `SET` of a pipeline and in `EXEC`, with the keys from the `Spec` of the command. A user with no pattern reaches no key. `KEYS`, `SCAN` and `RANDOMKEY` need the right to read every key (Redis filters the result, sediment refuses the command). Rules for subcommands (`+config|get`), selectors, `ACL SETUSER`, `DELUSER`, `GETUSER`, `SAVE` and `LOG`, and a user from the common name of a client certificate (the rule `certonly` and `tls-auth-clients-user`). A change of the users closes the connections of a user that is gone or off.
+  - **Sign in protection**: after `auth-fail-limit` failed sign ins from one address in `auth-fail-window`, the address is refused without checking the password.
+  - **Operator commands**: `CLIENT LIST`, `CLIENT KILL` and `SLOWLOG`. The slow log keeps the name of a command and its number of arguments, never an argument.
+  - **Logging** with `slog`: `shale.Options.Logger`, `log-format` of text or JSON, and `SIGHUP` reads `loglevel` again. The engine logs the flush, the compaction, the waits of the writes, the recovery and the files that it could not remove. The server logs failed sign ins, denied commands and slow commands, with the trace id when the command has a span.
+  - **Metrics** with the OpenTelemetry API only in the main module. `Options.Meter` is nil by default. The commands by name and result, their latency, the clients and the counts of Shale are read when the metrics are collected. `sedimentd` is a module of its own (`cmd/sedimentd`) that links the SDK, an OTLP export over HTTP (`otlp-metrics`), the metrics of the Go runtime and the only HTTP port of the server, the Prometheus endpoint (`metrics-addr`, off by default, TLS and a sign in when other machines reach it).
+  - **Tracing**: a span for the commands that `trace-sample-rate` picks (the name, the number of keys, the result and the size of the reply, never a key), and a span for each flush and each compaction. The export is `otlp-traces`. The Raft log will carry the context in milestone 3.
+  - **Health through RESP**: `PING` answers an error when the storage stopped, `INFO` shows `loading` and `storage`, the node answers `LOADING` while it opens its data, and `sedimentd healthcheck` exits 0 or 1.
+  - **Packaging**: a `Dockerfile` (30 MB, distroless, not root, with the health check), `make dist` for Linux and macOS, a release workflow that runs on a tag (not run yet, it needs the first tag), and the quickstart in the README. The image was built and run in a Linux virtual machine.
+  - **Measures on Linux** with `scripts/measure-linux.sh`, in a container of one CPU. See [BENCHMARKS.md](BENCHMARKS.md). The numbers are from a virtual machine of a laptop, so they are not for a real deployment.
 
 ## Decided against
 
@@ -74,21 +84,7 @@ Measured or discussed, and not to be proposed again without a new reason.
 
 ## Path to v1.0
 
-v1.0 is milestones 2 to 4. Milestone 1, a complete single node, is done and is listed under Done. Each milestone ends with `make full` green and the docs updated.
-
-### Milestone 2: safe to run, and visible from the inside
-- [ ] **ACL phase 2**: key patterns (`~prefix:*`, `%R~`, `%W~`), `ACL SETUSER`, `DELUSER`, `SAVE`, `GETUSER`, `LOG`, selectors, rules for subcommands, user from the CN of a client certificate.
-- [ ] **Sign in protection**: a rate limit of attempts per address.
-- [ ] **Operator commands**: `CLIENT LIST`, `CLIENT KILL`, `SLOWLOG`.
-- [ ] **Logging**, as structured `slog`, with a `log-format` of text or JSON and a level that `SIGHUP` reloads.
-  - The engine has no logger today. Give `shale.Options` a `Logger` and log the flush and the compaction (start, end, bytes, time), the stalls of the writes, what recovery replayed or cut, and a file that could not be removed.
-  - The server logs the failed sign ins and the denied commands (user, address, command, never the key, the value or the password), the commands slower than a limit, and the connections that close with an error. The opening and closing of a connection is at debug level.
-  - A line of a request carries the trace id, so a log and a trace meet.
-- [ ] **Metrics** in OpenTelemetry format (OTLP), and a Prometheus endpoint, with what `INFO` shows today: commands by name and result, latency, clients, the waits of the writes, the flush, the compaction, the block cache, and the Go runtime. The Prometheus endpoint is the only HTTP port of the server. It is off by default, listens on `127.0.0.1`, and takes TLS and a sign in when it is opened to a network.
-- [ ] **Tracing with OpenTelemetry.** A span for each command with the name, the number of keys (never a key), the result and the size of the reply, sampled by a rate in the settings. The flush and the compaction are spans of their own. Only the OpenTelemetry API is imported by the engine and the server, and `sedimentd` links the SDK, so a library user pays nothing. The context goes in the entries of the Raft log in milestone 3, so a write is one trace across the nodes.
-- [ ] **Health, through RESP as Redis does it.** `PING` answers `PONG` when the node can serve, and an error when it cannot (while it loads or recovers, and in milestone 3 when it knows no leader). `INFO` shows the state: `loading`, and in milestone 3 `role`, `leader`, `raft_term` and `raft_applied_index`. `sedimentd healthcheck` speaks RESP, with TLS and a sign in if the node has them, and exits with 0 or 1, for the `HEALTHCHECK` of a container and the exec probe of Kubernetes, because a small image has no `redis-cli`. There is no HTTP port for health.
-- [ ] **Measures on Linux**, with a container of one CPU (the scripts use the `ps` of macOS), before any number is said for a real deployment.
-- [ ] **Packaging**: a container image, release builds for Linux and macOS, and a quickstart of one command in the README.
+v1.0 is milestones 3 and 4. Milestones 1 and 2 are done and are listed under Done. Each milestone ends with `make full` green and the docs updated.
 
 ### Milestone 3: replication with Raft
 - [ ] **One Raft group** of 3 or 5 nodes in one region. The leader takes the writes, the Raft log is separate from the WAL of Shale, Shale is the state machine, and a write returns after a majority has it.
