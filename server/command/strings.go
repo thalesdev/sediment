@@ -37,10 +37,12 @@ func get(env *Env, _ *Client, args [][]byte) resp.Value {
 	return resp.Bulk(value)
 }
 
-// set is SET key value [NX | XX] [GET] [EX s | PX ms | EXAT s | PXAT ms | KEEPTTL].
+// set is SET key value [NX | XX | IFEQ v | IFNE v | IFDEQ d | IFDNE d] [GET] [EX s |
+// PX ms | EXAT s | PXAT ms | KEEPTTL].
 func set(env *Env, cl *Client, args [][]byte) resp.Value {
 	key, value := args[1], args[2]
-	var nx, xx, wantOld, keepTTL, hasExpiry bool
+	var nx, xx, wantOld, keepTTL, hasExpiry, hasCond bool
+	var cond condition
 	var deadline int64
 	opts := args[3:]
 	for i := 0; i < len(opts); i++ {
@@ -52,6 +54,13 @@ func set(env *Env, cl *Client, args [][]byte) resp.Value {
 			xx = true
 		case "GET":
 			wantOld = true
+		case "IFEQ", "IFNE", "IFDEQ", "IFDNE":
+			if hasCond || i+1 >= len(opts) {
+				return replySyntax
+			}
+			cond, _ = parseCondition(name, opts[i+1])
+			hasCond = true
+			i++
 		case "KEEPTTL":
 			if hasExpiry || keepTTL {
 				return replySyntax
@@ -75,13 +84,13 @@ func set(env *Env, cl *Client, args [][]byte) resp.Value {
 			return replySyntax
 		}
 	}
-	if nx && xx {
+	if nx && xx || hasCond && (nx || xx) {
 		return replySyntax
 	}
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	if !nx && !xx && !wantOld && !keepTTL {
+	if !nx && !xx && !wantOld && !keepTTL && !hasCond {
 		stripe := cl.rlock(env, key)
 		defer cl.runlock(env, stripe)
 		if err := env.save(key, value, deadline); err != nil {
@@ -101,6 +110,17 @@ func set(env *Env, cl *Client, args [][]byte) resp.Value {
 	}
 	if (nx && found) || (xx && !found) {
 		return oldReply(wantOld, found, rec.body)
+	}
+	if hasCond {
+		if found && rec.typ != typeString {
+			return replyWrongType
+		}
+		if found && !cond.validDigest() {
+			return replyBadDigest
+		}
+		if !cond.holds(found, rec.body) {
+			return oldReply(wantOld, found, rec.body)
+		}
 	}
 	if keepTTL && found {
 		deadline = rec.deadline
