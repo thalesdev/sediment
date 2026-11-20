@@ -292,7 +292,7 @@ func aclLog(env *Env, args [][]byte) resp.Value {
 		if !ok || v < 0 {
 			return resp.Error("ERR value is out of range, must be positive")
 		}
-		n = int(v)
+		n = toInt(v)
 	default:
 		return WrongArgs("acl|log")
 	}

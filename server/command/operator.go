@@ -340,7 +340,7 @@ func slowlog(env *Env, _ *Client, args [][]byte) resp.Value {
 			if !ok || v < -1 {
 				return resp.Error("ERR count should be greater than or equal to -1")
 			}
-			n = int(v)
+			n = toInt(v)
 		default:
 			return WrongArgs("slowlog|get")
 		}
