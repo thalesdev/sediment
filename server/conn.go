@@ -65,6 +65,7 @@ func (s *Server) newConn(nc net.Conn) *conn {
 	c.client = &command.Client{
 		ID:      s.env.NextID(),
 		Addr:    nc.RemoteAddr().String(),
+		LAddr:   nc.LocalAddr().String(),
 		Proto:   2,
 		Authed:  authed,
 		User:    "default",

@@ -96,6 +96,25 @@ type Options struct {
 	// closes the connection. The default is 5.
 	MaxAuthFailures int
 
+	// SlowLogThreshold is the time that a command must take to enter the slow log
+	// and the log of the server. The default is 10 ms, and a negative value turns
+	// both off.
+	SlowLogThreshold time.Duration
+
+	// SlowLogMaxLen is the number of entries that the slow log keeps. The default
+	// is 128.
+	SlowLogMaxLen int
+
+	// AuthFailLimit is the number of failed sign ins from one address, within
+	// AuthFailWindow, after which the server refuses the sign ins of that address
+	// without checking the password. The default is 20, and a negative value turns
+	// the limit off.
+	AuthFailLimit int
+
+	// AuthFailWindow is how long a failed sign in counts, and how long an address
+	// stays refused. The default is 60 seconds.
+	AuthFailWindow time.Duration
+
 	// Version is the version that the server reports. The default is "dev".
 	Version string
 
@@ -119,6 +138,10 @@ const (
 	defaultAuthDelay        = 100 * time.Millisecond
 	defaultAuthDelayMax     = 2 * time.Second
 	defaultMaxAuthFailures  = 5
+	defaultSlowLogThreshold = 10 * time.Millisecond
+	defaultSlowLogMaxLen    = 128
+	defaultAuthFailWindow   = time.Minute
+	defaultAuthFailLimit    = 20
 	defaultSweepInterval    = time.Minute
 	defaultMaxTxCommands    = 10000
 	defaultMaxTxBytes       = 32 << 20
@@ -143,6 +166,18 @@ func (o Options) withDefaults() Options {
 		o.PreAuthLimits = preAuthLimits
 	}
 	o.PreAuthLimits = o.PreAuthLimits.WithDefaults()
+	if o.SlowLogThreshold == 0 {
+		o.SlowLogThreshold = defaultSlowLogThreshold
+	}
+	if o.AuthFailLimit == 0 {
+		o.AuthFailLimit = defaultAuthFailLimit
+	}
+	if o.AuthFailWindow <= 0 {
+		o.AuthFailWindow = defaultAuthFailWindow
+	}
+	if o.SlowLogMaxLen <= 0 {
+		o.SlowLogMaxLen = defaultSlowLogMaxLen
+	}
 	if o.MaxClients <= 0 {
 		o.MaxClients = defaultMaxClients
 	}

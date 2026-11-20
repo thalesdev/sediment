@@ -24,6 +24,7 @@ type Server struct {
 	env  *command.Env
 	reg  *command.Registry
 	set  *command.Spec
+	slow slowLog
 
 	mu        sync.Mutex
 	listeners map[net.Listener]struct{}
@@ -63,6 +64,11 @@ func New(o Options) (*Server, error) {
 		conns:     make(map[*conn]struct{}),
 		started:   time.Now(),
 	}
+	s.slow.max = o.SlowLogMaxLen
+	var limit command.AuthLimiter
+	if l := newAuthLimit(o.AuthFailLimit, o.AuthFailWindow, nil); l != nil {
+		limit = l
+	}
 	versions := command.NewVersions()
 	s.env = &command.Env{
 		Store:           command.WithVersions(o.Store, versions),
@@ -74,6 +80,7 @@ func New(o Options) (*Server, error) {
 		Locks:           command.NewLocks(),
 		Access:          o.Access,
 		Meta:            s,
+		Operator:        s,
 		Registry:        s.reg,
 		Log:             o.Log,
 		Version:         o.Version,
@@ -83,6 +90,7 @@ func New(o Options) (*Server, error) {
 		AuthDelay:       o.AuthDelay,
 		AuthDelayMax:    o.AuthDelayMax,
 		MaxAuthFailures: o.MaxAuthFailures,
+		AuthLimit:       limit,
 	}
 	return s, nil
 }

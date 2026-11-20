@@ -2,7 +2,11 @@
 
 package server
 
-import "github.com/thalesdev/sediment/server/command"
+import (
+	"time"
+
+	"github.com/thalesdev/sediment/server/command"
+)
 
 const (
 	// maxBatchSets is the largest number of SET commands that run as one write.
@@ -54,7 +58,10 @@ func (c *conn) batchSets(first [][]byte) (carry [][]byte, readErr error, written
 		cmds = append(cmds, next)
 		size += len(next[1]) + len(next[2])
 	}
+	start := time.Now()
+	c.client.Touch(&c.s.set.Name, start)
 	replies := command.SetMany(c.s.env, cmds)
+	c.s.observe(c.client, &c.s.set.Name, 2*len(cmds), start)
 	c.s.totalCommands.Add(uint64(len(cmds)))
 	c.s.setBatches.Add(1)
 	c.s.setBatched.Add(uint64(len(cmds)))

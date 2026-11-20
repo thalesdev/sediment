@@ -93,6 +93,37 @@ type Access interface {
 	Reload() ([]string, error)
 }
 
+// AuthLimiter limits the failed sign ins that come from one address.
+type AuthLimiter interface {
+	// Blocked reports whether the address has too many failed sign ins, and the
+	// server must refuse its sign ins without checking the password.
+	Blocked(addr string) bool
+
+	// Failed counts a failed sign in of the address.
+	Failed(addr string)
+}
+
+// Operator gives the commands of an operator the list of the clients and the slow
+// log of the server.
+type Operator interface {
+	// Clients returns a copy of the state of each client.
+	Clients() []ClientInfo
+
+	// Kill closes the connection of the client with id. It returns false if there
+	// is no such client.
+	Kill(id uint64) bool
+
+	// SlowLog returns up to n entries of the slow log, the newest first. If n is
+	// negative it returns all of them.
+	SlowLog(n int) []SlowEntry
+
+	// SlowLogLen returns the number of entries of the slow log.
+	SlowLogLen() int
+
+	// SlowLogReset removes every entry of the slow log.
+	SlowLogReset()
+}
+
 // Meta gives the commands the state of the server.
 type Meta interface {
 	// Info returns the text of the INFO reply for a section, or for all of them
@@ -117,6 +148,10 @@ type Env struct {
 
 	// Meta gives INFO and CONFIG GET their data.
 	Meta Meta
+
+	// Operator gives CLIENT LIST, CLIENT KILL and SLOWLOG their data. It can be
+	// nil, and then these commands are errors.
+	Operator Operator
 
 	// Registry holds the commands. COMMAND reads it.
 	Registry *Registry
@@ -148,6 +183,10 @@ type Env struct {
 	// MaxAuthFailures is the number of failed sign ins after which the
 	// connection is closed.
 	MaxAuthFailures int
+
+	// AuthLimit limits the failed sign ins of each address. It can be nil, and
+	// then there is no limit by address.
+	AuthLimit AuthLimiter
 
 	nextID atomic.Uint64
 
@@ -207,6 +246,13 @@ type Client struct {
 	// Created is the time of the connection.
 	Created time.Time
 
+	// LAddr is the local address.
+	LAddr string
+
+	mu     sync.Mutex
+	cmd    atomic.Pointer[string]
+	active atomic.Int64
+
 	scan scanState
 	tx   txState
 }
@@ -252,7 +298,7 @@ func (r *Registry) Specs() []*Spec {
 // NewRegistry returns a registry with all the commands of the server.
 func NewRegistry() *Registry {
 	r := &Registry{specs: make(map[string]*Spec)}
-	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), moreStringCommands(), txCommands(), persistenceCommands(), connectionCommands(), metaCommands()} {
+	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), moreStringCommands(), txCommands(), persistenceCommands(), connectionCommands(), operatorCommands(), metaCommands()} {
 		for _, s := range list {
 			r.specs[s.Name] = s
 		}

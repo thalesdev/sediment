@@ -5,6 +5,7 @@ package server
 import (
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/thalesdev/sediment/resp"
 	"github.com/thalesdev/sediment/server/command"
@@ -50,7 +51,11 @@ func (c *conn) execute(args [][]byte) (reply resp.Value) {
 		}
 	}
 	s.totalCommands.Add(1)
-	return spec.Handler(s.env, c.client, args)
+	start := time.Now()
+	c.client.Touch(&spec.Name, start)
+	reply = spec.Handler(s.env, c.client, args)
+	s.observe(c.client, &spec.Name, len(args)-1, start)
+	return reply
 }
 
 // printable returns b cut to max bytes, with each byte that is not printable

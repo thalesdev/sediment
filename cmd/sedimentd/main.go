@@ -184,6 +184,27 @@ func reloadLevel(path string, level *slog.LevelVar) error {
 	return nil
 }
 
+// slowLogThreshold converts the slowlog-log-slower-than setting, in microseconds,
+// to the option of the server. 0 logs every command, which is a time of 1 ns.
+func slowLogThreshold(us int) time.Duration {
+	switch {
+	case us < 0:
+		return -1
+	case us == 0:
+		return time.Nanosecond
+	}
+	return time.Duration(us) * time.Microsecond
+}
+
+// authFailLimit converts the auth-fail-limit setting to the option of the server,
+// where a negative value turns the limit off.
+func authFailLimit(n int) int {
+	if n == 0 {
+		return -1
+	}
+	return n
+}
+
 // maxPassword is the longest password that hash-password reads, in bytes.
 const maxPassword = 1 << 10
 
@@ -295,20 +316,24 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	srv, err := server.New(server.Options{
-		Store:          db,
-		Access:         access,
-		Limits:         resp.Limits{MaxBulk: cfg.MaxBulk, MaxArgs: cfg.MaxArgs},
-		MaxClients:     cfg.MaxClients,
-		MaxKey:         cfg.MaxKey,
-		IdleTimeout:    cfg.Timeout,
-		SweepInterval:  cfg.SweepInterval,
-		BackupDir:      cfg.BackupDir,
-		ReadTimeout:    cfg.ReadTimeout,
-		WriteTimeout:   cfg.WriteTimeout,
-		PreAuthTimeout: cfg.PreAuthTimeout,
-		Version:        version,
-		Settings:       cfg.Settings(),
-		Log:            log,
+		Store:            db,
+		Access:           access,
+		Limits:           resp.Limits{MaxBulk: cfg.MaxBulk, MaxArgs: cfg.MaxArgs},
+		MaxClients:       cfg.MaxClients,
+		SlowLogThreshold: slowLogThreshold(cfg.SlowLogSlowerThan),
+		SlowLogMaxLen:    cfg.SlowLogMaxLen,
+		AuthFailLimit:    authFailLimit(cfg.AuthFailLimit),
+		AuthFailWindow:   cfg.AuthFailWindow,
+		MaxKey:           cfg.MaxKey,
+		IdleTimeout:      cfg.Timeout,
+		SweepInterval:    cfg.SweepInterval,
+		BackupDir:        cfg.BackupDir,
+		ReadTimeout:      cfg.ReadTimeout,
+		WriteTimeout:     cfg.WriteTimeout,
+		PreAuthTimeout:   cfg.PreAuthTimeout,
+		Version:          version,
+		Settings:         cfg.Settings(),
+		Log:              log,
 	})
 	if err != nil {
 		return err
