@@ -62,7 +62,7 @@ type SlowEntry struct {
 // operatorCommands returns SLOWLOG.
 func operatorCommands() []*Spec {
 	return []*Spec{
-		{Name: "slowlog", Arity: -2, Categories: acl.CatSlow | acl.CatAdmin | acl.CatDangerous, Handler: slowlog},
+		{Name: "slowlog", Arity: -2, Categories: acl.CatSlow | acl.CatAdmin | acl.CatDangerous, Subs: []string{"get", "len", "reset"}, Handler: slowlog},
 	}
 }
 
@@ -99,6 +99,13 @@ func (c *Client) setLib(name, ver string) {
 		c.LibVer = ver
 	}
 	c.mu.Unlock()
+}
+
+// SignInAs signs the client in as the user, with no password. The server calls it for
+// a client whose certificate names a user.
+func (c *Client) SignInAs(user string) {
+	c.setUser(user)
+	c.Authed = true
 }
 
 // Touch records that the client runs the command cmd at now. The server calls it for
@@ -156,16 +163,16 @@ func (i ClientInfo) line(now time.Time) string {
 // commands of an operator, or the zero Value. The check is by the categories admin
 // and dangerous, so that a user who can run CLIENT but not these cannot list or
 // kill the other clients.
-func needAdmin(env *Env, c *Client) (resp.Value, bool) {
-	if env.Access != nil && !env.Access.Allowed(c.User, "client", acl.CatAdmin|acl.CatDangerous) {
-		return resp.Error("NOPERM User " + printable([]byte(c.User), 64) + " has no permissions to run the 'client|list' or 'client|kill' command"), false
+func needAdmin(env *Env, c *Client, sub string) (resp.Value, bool) {
+	if env.Access != nil && !env.Access.Allowed(c.User, "client", sub, acl.CatAdmin|acl.CatDangerous, nil) {
+		return resp.Error("NOPERM User " + printable([]byte(c.User), 64) + " has no permissions to run the 'client|" + sub + "' command"), false
 	}
 	return resp.Value{}, true
 }
 
 // clientList is CLIENT LIST [TYPE normal] [ID id ...].
 func clientList(env *Env, c *Client, args [][]byte) resp.Value {
-	if bad, ok := needAdmin(env, c); !ok {
+	if bad, ok := needAdmin(env, c, "list"); !ok {
 		return bad
 	}
 	if env.Operator == nil {
@@ -246,7 +253,7 @@ func (f killFilter) matches(i ClientInfo, self uint64) bool {
 // SKIPME. The old form answers OK or an error, and the new one the number of
 // connections that it closed.
 func clientKill(env *Env, c *Client, args [][]byte) resp.Value {
-	if bad, ok := needAdmin(env, c); !ok {
+	if bad, ok := needAdmin(env, c, "kill"); !ok {
 		return bad
 	}
 	if env.Operator == nil {

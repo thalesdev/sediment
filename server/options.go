@@ -96,6 +96,12 @@ type Options struct {
 	// closes the connection. The default is 5.
 	MaxAuthFailures int
 
+	// CertUser makes a client that presents a certificate sign in as the user that
+	// is named like the common name of the certificate, if that user has the rule
+	// certonly. It needs TLS with client certificates and a users file. The default is
+	// false.
+	CertUser bool
+
 	// SlowLogThreshold is the time that a command must take to enter the slow log
 	// and the log of the server. The default is 10 ms, and a negative value turns
 	// both off.

@@ -37,6 +37,14 @@ type Spec struct {
 	// in the COMMAND reply. A command without keys has 0 in each.
 	FirstKey, LastKey, KeyStep int
 
+	// Subs are the lower case names of the subcommands, for a command whose first
+	// argument names one. An ACL rule can allow or deny a single subcommand.
+	Subs []string
+
+	// ListsKeys is true for a command that returns key names that it does not take
+	// as arguments, such as KEYS. A user can run it only if it can read every key.
+	ListsKeys bool
+
 	// Tx says how the command behaves between MULTI and EXEC.
 	Tx TxMode
 
@@ -80,8 +88,42 @@ type Access interface {
 	// Authenticate reports whether the user and the password are valid.
 	Authenticate(user string, password []byte) bool
 
-	// Allowed reports whether the user can run the command.
-	Allowed(user, command string, categories acl.Category) bool
+	// Allowed reports whether the user can run the command, with its subcommand
+	// if it has one, on the keys.
+	Allowed(user, command, sub string, categories acl.Category, keys [][]byte) bool
+
+	// AllKeysReadable reports whether the user can read every key.
+	AllKeysReadable(user string) bool
+
+	// Active reports whether the user exists and is on.
+	Active(user string) bool
+
+	// CertUser reports whether the user signs in with the client certificate whose
+	// common name is the name of the user.
+	CertUser(user string) bool
+
+	// Record keeps a denied command or a failed sign in for ACL LOG.
+	Record(reason, context, object, user, client string)
+
+	// LogEntries returns up to n entries of ACL LOG, the newest first, or all of
+	// them if n is negative.
+	LogEntries(n int) []acl.LogEntry
+
+	// LogReset removes the entries of ACL LOG.
+	LogReset()
+
+	// SetUser applies the rules to a user, and makes the user if it is new. It
+	// returns the warnings.
+	SetUser(name string, rules []string) ([]string, error)
+
+	// DelUser removes users and returns how many it removed.
+	DelUser(names []string) (int, error)
+
+	// Info returns the rules of a user for ACL GETUSER.
+	Info(name string) (acl.UserInfo, bool)
+
+	// Save writes the users to the ACL file.
+	Save() error
 
 	// Users returns the names of the users.
 	Users() []string
@@ -112,6 +154,11 @@ type Operator interface {
 	// Kill closes the connection of the client with id. It returns false if there
 	// is no such client.
 	Kill(id uint64) bool
+
+	// CloseWhere closes the connection of each client, except the one with id
+	// skip, for which keep returns false for the name of its user. It returns how
+	// many it closed.
+	CloseWhere(keep func(user string) bool, skip uint64) int
 
 	// SlowLog returns up to n entries of the slow log, the newest first. If n is
 	// negative it returns all of them.

@@ -39,6 +39,32 @@ func TestParse(t *testing.T) {
 		}
 	})
 
+	t.Run("Should read the settings of the slow log and of the sign in limit", func(t *testing.T) {
+		c, err := parse(t, "slowlog-log-slower-than 500\nslowlog-max-len 10\nauth-fail-limit 0\nauth-fail-window 30\n")
+		if err != nil || c.SlowLogSlowerThan != 500 || c.SlowLogMaxLen != 10 || c.AuthFailLimit != 0 || c.AuthFailWindow != 30*time.Second {
+			t.Fatalf("got %+v, %v", c, err)
+		}
+		if c, _ = parse(t, "slowlog-log-slower-than -1\n"); c.SlowLogSlowerThan != -1 {
+			t.Fatalf("got %d", c.SlowLogSlowerThan)
+		}
+		for _, text := range []string{"slowlog-log-slower-than -2\n", "slowlog-max-len 0\n", "auth-fail-limit -1\n", "auth-fail-window 0\n"} {
+			if _, err := parse(t, text); err == nil {
+				t.Fatalf("%q was accepted", text)
+			}
+		}
+	})
+
+	t.Run("Should need mTLS and a users file for tls-auth-clients-user", func(t *testing.T) {
+		c, err := parse(t, "tls-cert-file a\ntls-key-file b\ntls-ca-cert-file c\naclfile d\ntls-auth-clients-user yes\n")
+		if err != nil || !c.TLSAuthClientsUser || c.Validate() != nil {
+			t.Fatalf("got %+v, %v", c, err)
+		}
+		c, _ = parse(t, "tls-cert-file a\ntls-key-file b\ntls-auth-clients-user yes\n")
+		if c.Validate() == nil {
+			t.Fatal("accepted with no CA and no users file")
+		}
+	})
+
 	t.Run("Should refuse unknown keys and bad values", func(t *testing.T) {
 		for _, text := range []string{
 			"tls-cert-fil /x\n", "port 0\n", "port 70000\n", "port abc\n", "sync maybe\n", "timeout -1\n", "read-timeout 0\n",

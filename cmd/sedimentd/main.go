@@ -29,6 +29,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -252,7 +253,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	var access command.Access
 	if cfg.ACLFile != "" {
 		known := command.NewRegistry()
-		reg, warnings, err := acl.Load(cfg.ACLFile, acl.ParseOptions{KnownCommand: func(n string) bool { return known.Lookup([]byte(n)) != nil }})
+		reg, warnings, err := acl.Load(cfg.ACLFile, acl.ParseOptions{
+			KnownCommand: func(n string) bool { return known.Lookup([]byte(n)) != nil },
+			KnownSub: func(n, sub string) bool {
+				spec := known.Lookup([]byte(n))
+				return spec != nil && slices.Contains(spec.Subs, sub)
+			},
+		})
 		if err != nil {
 			return fmt.Errorf("aclfile: %w", err)
 		}
@@ -319,6 +326,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		Store:            db,
 		Access:           access,
 		Limits:           resp.Limits{MaxBulk: cfg.MaxBulk, MaxArgs: cfg.MaxArgs},
+		CertUser:         cfg.TLSAuthClientsUser,
 		MaxClients:       cfg.MaxClients,
 		SlowLogThreshold: slowLogThreshold(cfg.SlowLogSlowerThan),
 		SlowLogMaxLen:    cfg.SlowLogMaxLen,

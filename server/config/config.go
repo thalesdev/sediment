@@ -102,6 +102,11 @@ type Config struct {
 	// ACLFile is the file of the users.
 	ACLFile string
 
+	// TLSAuthClientsUser makes a client certificate sign the client in as the user
+	// that is named like its common name, if the user has the rule certonly. It
+	// needs tls-ca-cert-file and aclfile. The default is false.
+	TLSAuthClientsUser bool
+
 	// InsecureBind allows an address that is not loopback with no TLS and no
 	// sign in. The default is false.
 	InsecureBind bool
@@ -201,6 +206,8 @@ func (c *Config) Set(key string, v []string) error {
 		c.TLSCA = val
 	case "aclfile":
 		c.ACLFile = val
+	case "tls-auth-clients-user":
+		return setBool(&c.TLSAuthClientsUser, key, val)
 	case "insecure-bind":
 		return setBool(&c.InsecureBind, key, val)
 	case "loglevel":
@@ -291,6 +298,9 @@ func (c Config) Validate() error {
 	}
 	if c.TLSCA != "" && c.TLSCert == "" {
 		return errors.New("tls-ca-cert-file needs tls-cert-file and tls-key-file")
+	}
+	if c.TLSAuthClientsUser && (c.TLSCA == "" || c.ACLFile == "") {
+		return errors.New("tls-auth-clients-user needs tls-ca-cert-file and aclfile")
 	}
 	for _, b := range c.Bind {
 		if b == "" {

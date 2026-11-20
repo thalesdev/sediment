@@ -26,12 +26,11 @@ func isPlainSet(args [][]byte) bool {
 // canBatchSet reports whether this client may run SET, so that the checks of
 // execute would not refuse it. If it may not, the command takes the normal path
 // and gets its error.
-func (c *conn) canBatchSet() bool {
+func (c *conn) canBatchSet(args [][]byte) bool {
 	if !c.client.Authed || c.s.set == nil || c.client.InMulti() {
 		return false
 	}
-	a := c.s.opts.Access
-	return a == nil || a.Allowed(c.client.User, c.s.set.Name, c.s.set.Categories)
+	return c.s.opts.Access == nil || c.s.env.Check(c.client.User, c.s.set, args) == ""
 }
 
 // batchSets runs first and the plain SET commands that follow it and that the
@@ -51,7 +50,7 @@ func (c *conn) batchSets(first [][]byte) (carry [][]byte, readErr error, written
 			readErr = err
 			break
 		}
-		if !isPlainSet(next) {
+		if !isPlainSet(next) || !c.canBatchSet(next) {
 			carry = next
 			break
 		}

@@ -21,7 +21,7 @@ func connectionCommands() []*Spec {
 		{Name: "select", Arity: 2, Categories: connFast, Handler: selectDB},
 		{Name: "auth", Arity: -2, Categories: connFast, NoAuth: true, Tx: TxNoQueue, Handler: auth},
 		{Name: "hello", Arity: -1, Categories: connFast, NoAuth: true, Tx: TxNoQueue, Handler: hello},
-		{Name: "client", Arity: -2, Categories: acl.CatSlow | acl.CatConnection, Handler: clientCmd},
+		{Name: "client", Arity: -2, Categories: acl.CatSlow | acl.CatConnection, Subs: []string{"id", "getname", "setname", "setinfo", "info", "list", "kill"}, Handler: clientCmd},
 	}
 }
 
@@ -79,6 +79,7 @@ func signIn(env *Env, c *Client, user string, password []byte) (resp.Value, bool
 		return resp.Value{}, true
 	}
 	c.AuthFailures++
+	env.Access.Record("auth", "toplevel", "AUTH", printable([]byte(user), 64), strings.TrimSpace(c.Info().line(time.Now())))
 	if env.AuthLimit != nil {
 		env.AuthLimit.Failed(c.Addr)
 	}

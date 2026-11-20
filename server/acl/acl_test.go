@@ -95,29 +95,29 @@ func TestParse(t *testing.T) {
 			t.Fatal(err)
 		}
 		u := users["u"]
-		if !u.allowed("get", CatRead|CatFast) || u.allowed("info", CatSlow|CatDangerous) || !u.allowed("config", CatAdmin|CatDangerous) {
+		if !u.allowed("get", "", CatRead|CatFast, nil) || u.allowed("info", "", CatSlow|CatDangerous, nil) || !u.allowed("config", "", CatAdmin|CatDangerous, nil) {
 			t.Fatal("wrong decisions")
 		}
 	})
 
 	t.Run("Should let a user with no rule run nothing", func(t *testing.T) {
 		users, _, _ := parse(t, "user u on nopass\n")
-		if users["u"].allowed("get", CatRead) {
+		if users["u"].allowed("get", "", CatRead, nil) {
 			t.Fatal("a user with no rule can run a command")
 		}
 	})
 
 	t.Run("Should not let an off user run anything", func(t *testing.T) {
 		users, _, _ := parse(t, "user u off nopass +@all\n")
-		if users["u"].allowed("get", CatRead) {
+		if users["u"].allowed("get", "", CatRead, nil) {
 			t.Fatal("an off user can run a command")
 		}
 	})
 
 	t.Run("Should fail closed on what it does not enforce", func(t *testing.T) {
 		for _, line := range []string{
-			"user u on nopass ~app:* +@all", "user u on nopass %R~a +@all", "user u on nopass resetkeys",
-			"user u on nopass +config|get", "user u on nopass -nosuchcommand", "user u on nopass +@nosuchcategory",
+			"user u on nopass %X~a +@all", "user u on nopass ~", "user u on nopass %R~", "user u on nopass (~a +get",
+			"user u on nopass (>pw)", "user u on nopass +get|x|y", "user u on nopass -nosuchcommand", "user u on nopass +@nosuchcategory",
 			"user u on nopass wat", "user u on #zz", "user", "hello", "user u on nopass +@all\nuser u off",
 		} {
 			if _, _, err := parse(t, line+"\n"); err == nil {
@@ -194,7 +194,7 @@ func TestRegistry(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte("user app on nopass ~k:* +@all\n"), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte("user app on nopass wat +@all\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := r.Reload(); err == nil {

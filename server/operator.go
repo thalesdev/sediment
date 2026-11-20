@@ -51,6 +51,22 @@ func sortClients(infos []command.ClientInfo) {
 	}
 }
 
+// CloseWhere closes the connection of each client, except the one with id skip,
+// for which keep returns false for the name of its user.
+func (s *Server) CloseWhere(keep func(user string) bool, skip uint64) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for c := range s.conns {
+		if c.client.ID == skip || keep(c.client.Info().User) {
+			continue
+		}
+		_ = c.nc.Close()
+		n++
+	}
+	return n
+}
+
 // Kill closes the connection of the client with id.
 func (s *Server) Kill(id uint64) bool {
 	s.mu.Lock()

@@ -149,14 +149,16 @@ func TestAuth(t *testing.T) {
 		a := dial(t, addr)
 		wantSimple(t, a.do("AUTH", "admin", "admin-pass"), "OK")
 		wantSimple(t, a.do("ACL", "LOAD"), "OK")
-		wantError(t, c.do("SET", "x", "2"), "NOPERM")
+		if !c.closed() {
+			t.Fatal("the connection of a user that is off stayed open")
+		}
 		wantError(t, dial(t, addr).do("AUTH", "app", "app-pass"), "WRONGPASS")
 	})
 
 	t.Run("Should keep the users when a reload fails", func(t *testing.T) {
 		a := dial(t, addr)
 		wantSimple(t, a.do("AUTH", "admin", "admin-pass"), "OK")
-		if err := os.WriteFile(path, []byte("user admin on nopass ~secret:* +@all\n"), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte("user admin on nopass wat +@all\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		v := a.do("ACL", "LOAD")
@@ -214,7 +216,7 @@ func TestNoAccess(t *testing.T) {
 	})
 
 	t.Run("Should let anyone in when default is on with no password", func(t *testing.T) {
-		reg, _ := aclFile(t, "user default on nopass +@read +@write +@connection\n")
+		reg, _ := aclFile(t, "user default on nopass ~* +@read +@write +@connection\n")
 		_, addr := startServer(t, Options{Access: reg})
 		c := dial(t, addr)
 		wantSimple(t, c.do("SET", "k", "v"), "OK")

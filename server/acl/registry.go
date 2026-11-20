@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -23,6 +24,8 @@ type Registry struct {
 	path  string
 	opts  ParseOptions
 	users atomic.Pointer[map[string]*User]
+	mu    sync.Mutex
+	log   denyLog
 }
 
 // Load reads the users from the file at path. It also returns the warnings of the
@@ -49,6 +52,8 @@ func (r *Registry) Reload() ([]string, error) {
 
 // reload reads the file and swaps the users.
 func (r *Registry) reload() ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	f, err := os.Open(r.path)
 	if err != nil {
 		return nil, err
@@ -92,14 +97,12 @@ func Parse(in io.Reader, o ParseOptions) (map[string]*User, []string, error) {
 			return nil, nil, fmt.Errorf("line %d: user %q is defined twice", n, printable(name))
 		}
 		u := &User{name: name}
-		for _, tok := range words[2:] {
-			plain, err := u.applyRule(tok, o)
-			if err != nil {
-				return nil, nil, fmt.Errorf("line %d: user %q: %w", n, printable(name), err)
-			}
-			if plain {
-				warnings = append(warnings, fmt.Sprintf("line %d: user %q has a plain password in the file, replace it with its hash", n, printable(name)))
-			}
+		plain, err := u.applyTokens(words[2:], o)
+		if err != nil {
+			return nil, nil, fmt.Errorf("line %d: user %q: %w", n, printable(name), err)
+		}
+		if plain {
+			warnings = append(warnings, fmt.Sprintf("line %d: user %q has a plain password in the file, replace it with its hash", n, printable(name)))
 		}
 		users[name] = u
 	}
@@ -131,7 +134,7 @@ func (r *Registry) RequireAuth() bool {
 // Authenticate reports whether the user exists, is on, and has the password.
 func (r *Registry) Authenticate(name string, pw []byte) bool {
 	u := r.get(name)
-	if u == nil || !u.enabled {
+	if u == nil || !u.enabled || u.certOnly {
 		dummy.verify(pw)
 		return false
 	}
@@ -151,10 +154,32 @@ func (r *Registry) Authenticate(name string, pw []byte) bool {
 	return ok
 }
 
-// Allowed reports whether the user can run the command.
-func (r *Registry) Allowed(name, command string, cats Category) bool {
+// Allowed reports whether the user can run the command, with its subcommand if it
+// has one, on the keys. A command that writes needs the right to write each key,
+// and any other command the right to read it.
+func (r *Registry) Allowed(name, command, sub string, cats Category, keys [][]byte) bool {
 	u := r.get(name)
-	return u != nil && u.allowed(command, cats)
+	return u != nil && u.allowed(command, sub, cats, keys)
+}
+
+// AllKeysReadable reports whether the user can read every key. The commands that
+// list keys, KEYS, SCAN and RANDOMKEY, need it.
+func (r *Registry) AllKeysReadable(name string) bool {
+	u := r.get(name)
+	return u != nil && u.allKeys()
+}
+
+// Active reports whether the user exists and is on.
+func (r *Registry) Active(name string) bool {
+	u := r.get(name)
+	return u != nil && u.enabled
+}
+
+// CertUser reports whether the user exists, is on, and signs in with a client
+// certificate whose common name is its name, which is what the rule certonly says.
+func (r *Registry) CertUser(name string) bool {
+	u := r.get(name)
+	return u != nil && u.enabled && u.certOnly
 }
 
 // Users returns the names of the users, sorted.
