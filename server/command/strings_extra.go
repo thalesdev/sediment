@@ -182,7 +182,7 @@ func msetex(env *Env, cl *Client, args [][]byte) resp.Value {
 	if int64(len(rest)) < 2*n {
 		return replyBadPairs
 	}
-	count := int(n)
+	count := toInt(n)
 	pairs, opts := rest[:2*count], rest[2*count:]
 	var nx, xx, keepTTL, hasExpiry bool
 	var deadline int64

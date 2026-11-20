@@ -226,7 +226,7 @@ func numKeys(args [][]byte, at, perKey int) int {
 	if !ok || n <= 0 || n > int64(len(args)-at-1)/int64(perKey) {
 		return 0
 	}
-	return int(n)
+	return toInt(n)
 }
 
 // cardKeys returns the keys of SINTERCARD, SUNIONCARD and SDIFFCARD.
