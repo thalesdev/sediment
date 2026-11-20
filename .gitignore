@@ -13,3 +13,6 @@ coverage.out
 # Local files
 *.local
 /tmp/
+
+/cmd/sedimentd/sedimentd
+/dist/

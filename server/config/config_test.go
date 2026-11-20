@@ -26,6 +26,90 @@ func TestParse(t *testing.T) {
 		}
 	})
 
+	t.Run("Should read the log format and refuse a format that is not text or json", func(t *testing.T) {
+		c, err := parse(t, "log-format json\n")
+		if err != nil || c.LogFormat != "json" {
+			t.Fatalf("got %+v, %v", c, err)
+		}
+		if c, _ = parse(t, ""); c.LogFormat != "text" {
+			t.Fatalf("the default format is %q", c.LogFormat)
+		}
+		if _, err := parse(t, "log-format xml\n"); err == nil {
+			t.Fatal("xml was accepted")
+		}
+	})
+
+	t.Run("Should read the settings of the slow log and of the sign in limit", func(t *testing.T) {
+		c, err := parse(t, "slowlog-log-slower-than 500\nslowlog-max-len 10\nauth-fail-limit 0\nauth-fail-window 30\n")
+		if err != nil || c.SlowLogSlowerThan != 500 || c.SlowLogMaxLen != 10 || c.AuthFailLimit != 0 || c.AuthFailWindow != 30*time.Second {
+			t.Fatalf("got %+v, %v", c, err)
+		}
+		if c, _ = parse(t, "slowlog-log-slower-than -1\n"); c.SlowLogSlowerThan != -1 {
+			t.Fatalf("got %d", c.SlowLogSlowerThan)
+		}
+		for _, text := range []string{"slowlog-log-slower-than -2\n", "slowlog-max-len 0\n", "auth-fail-limit -1\n", "auth-fail-window 0\n"} {
+			if _, err := parse(t, text); err == nil {
+				t.Fatalf("%q was accepted", text)
+			}
+		}
+	})
+
+	t.Run("Should need mTLS and a users file for tls-auth-clients-user", func(t *testing.T) {
+		c, err := parse(t, "tls-cert-file a\ntls-key-file b\ntls-ca-cert-file c\naclfile d\ntls-auth-clients-user yes\n")
+		if err != nil || !c.TLSAuthClientsUser || c.Validate() != nil {
+			t.Fatalf("got %+v, %v", c, err)
+		}
+		c, _ = parse(t, "tls-cert-file a\ntls-key-file b\ntls-auth-clients-user yes\n")
+		if c.Validate() == nil {
+			t.Fatal("accepted with no CA and no users file")
+		}
+	})
+
+	t.Run("Should read the settings of the metrics", func(t *testing.T) {
+		c, err := parse(t, "metrics-addr 127.0.0.1:9121\notlp-metrics yes\notlp-interval 15\n")
+		if err != nil || c.MetricsAddr != "127.0.0.1:9121" || !c.OTLPMetrics || c.OTLPInterval != 15*time.Second || c.Validate() != nil {
+			t.Fatalf("got %+v, %v", c, err)
+		}
+		if _, err := parse(t, "metrics-addr nonsense\n"); err == nil {
+			t.Fatal("an address with no port was accepted")
+		}
+	})
+
+	t.Run("Should need TLS and a sign in for a metrics address that other machines reach", func(t *testing.T) {
+		c, _ := parse(t, "metrics-addr 0.0.0.0:9121\n")
+		if c.Validate() == nil {
+			t.Fatal("accepted with no TLS and no sign in")
+		}
+		c, _ = parse(t, "metrics-addr 0.0.0.0:9121\ntls-cert-file a\ntls-key-file b\n")
+		if c.Validate() == nil {
+			t.Fatal("accepted with no sign in")
+		}
+		c, _ = parse(t, "metrics-addr 0.0.0.0:9121\ntls-cert-file a\ntls-key-file b\nmetrics-user u\nmetrics-password-hash h\n")
+		if err := c.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		for _, addr := range []string{"127.0.0.1:1", "[::1]:1", "localhost:1"} {
+			if c, _ = parse(t, "metrics-addr "+addr+"\n"); c.MetricsExposed() || c.Validate() != nil {
+				t.Fatalf("%s is exposed", addr)
+			}
+		}
+	})
+
+	t.Run("Should read the settings of the traces", func(t *testing.T) {
+		c, err := parse(t, "otlp-traces yes\ntrace-sample-rate 0.25\n")
+		if err != nil || !c.OTLPTraces || c.TraceSampleRate != 0.25 {
+			t.Fatalf("got %+v, %v", c, err)
+		}
+		if c, _ = parse(t, ""); c.TraceSampleRate != 0.01 || c.OTLPTraces {
+			t.Fatalf("got %+v", c)
+		}
+		for _, text := range []string{"trace-sample-rate 1.5\n", "trace-sample-rate -1\n", "trace-sample-rate x\n", "trace-sample-rate NaN\n"} {
+			if _, err := parse(t, text); err == nil {
+				t.Fatalf("%q was accepted", text)
+			}
+		}
+	})
+
 	t.Run("Should refuse unknown keys and bad values", func(t *testing.T) {
 		for _, text := range []string{
 			"tls-cert-fil /x\n", "port 0\n", "port 70000\n", "port abc\n", "sync maybe\n", "timeout -1\n", "read-timeout 0\n",

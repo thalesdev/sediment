@@ -37,11 +37,32 @@ type Spec struct {
 	// in the COMMAND reply. A command without keys has 0 in each.
 	FirstKey, LastKey, KeyStep int
 
+	// Subs are the lower case names of the subcommands, for a command whose first
+	// argument names one. An ACL rule can allow or deny a single subcommand.
+	Subs []string
+
+	// KeyFunc finds the keys of a command whose number is an argument, as in
+	// SINTERCARD numkeys key [key ...], where FirstKey, LastKey and KeyStep cannot say.
+	// It returns nil if the arguments have no valid count. If it is set, KeysOf uses it.
+	KeyFunc func(args [][]byte) [][]byte
+
+	// WritesAllKeys is true for a command that changes every key without naming
+	// them, such as FLUSHALL. A user can run it only if it can write every key.
+	WritesAllKeys bool
+
+	// ListsKeys is true for a command that returns key names that it does not take
+	// as arguments, such as KEYS. A user can run it only if it can read every key.
+	ListsKeys bool
+
 	// Tx says how the command behaves between MULTI and EXEC.
 	Tx TxMode
 
 	// Handler runs the command.
 	Handler Handler
+
+	// Slot is the position of the command in Registry.Specs. NewRegistry sets it,
+	// so that the server can keep a count for each command in a slice.
+	Slot int
 }
 
 // Store is the storage that the commands use. A *shale.DB is one.
@@ -80,8 +101,45 @@ type Access interface {
 	// Authenticate reports whether the user and the password are valid.
 	Authenticate(user string, password []byte) bool
 
-	// Allowed reports whether the user can run the command.
-	Allowed(user, command string, categories acl.Category) bool
+	// Allowed reports whether the user can run the command, with its subcommand
+	// if it has one, on the keys.
+	Allowed(user, command, sub string, categories acl.Category, keys [][]byte) bool
+
+	// AllKeysReadable reports whether the user can read every key.
+	AllKeysReadable(user string) bool
+
+	// AllKeysWritable reports whether the user can write every key.
+	AllKeysWritable(user string) bool
+
+	// Active reports whether the user exists and is on.
+	Active(user string) bool
+
+	// CertUser reports whether the user signs in with the client certificate whose
+	// common name is the name of the user.
+	CertUser(user string) bool
+
+	// Record keeps a denied command or a failed sign in for ACL LOG.
+	Record(reason, context, object, user, client string)
+
+	// LogEntries returns up to n entries of ACL LOG, the newest first, or all of
+	// them if n is negative.
+	LogEntries(n int) []acl.LogEntry
+
+	// LogReset removes the entries of ACL LOG.
+	LogReset()
+
+	// SetUser applies the rules to a user, and makes the user if it is new. It
+	// returns the warnings.
+	SetUser(name string, rules []string) ([]string, error)
+
+	// DelUser removes users and returns how many it removed.
+	DelUser(names []string) (int, error)
+
+	// Info returns the rules of a user for ACL GETUSER.
+	Info(name string) (acl.UserInfo, bool)
+
+	// Save writes the users to the ACL file.
+	Save() error
 
 	// Users returns the names of the users.
 	Users() []string
@@ -91,6 +149,42 @@ type Access interface {
 
 	// Reload reads the users again from their file, and returns the warnings.
 	Reload() ([]string, error)
+}
+
+// AuthLimiter limits the failed sign ins that come from one address.
+type AuthLimiter interface {
+	// Blocked reports whether the address has too many failed sign ins, and the
+	// server must refuse its sign ins without checking the password.
+	Blocked(addr string) bool
+
+	// Failed counts a failed sign in of the address.
+	Failed(addr string)
+}
+
+// Operator gives the commands of an operator the list of the clients and the slow
+// log of the server.
+type Operator interface {
+	// Clients returns a copy of the state of each client.
+	Clients() []ClientInfo
+
+	// Kill closes the connection of the client with id. It returns false if there
+	// is no such client.
+	Kill(id uint64) bool
+
+	// CloseWhere closes the connection of each client, except the one with id
+	// skip, for which keep returns false for the name of its user. It returns how
+	// many it closed.
+	CloseWhere(keep func(user string) bool, skip uint64) int
+
+	// SlowLog returns up to n entries of the slow log, the newest first. If n is
+	// negative it returns all of them.
+	SlowLog(n int) []SlowEntry
+
+	// SlowLogLen returns the number of entries of the slow log.
+	SlowLogLen() int
+
+	// SlowLogReset removes every entry of the slow log.
+	SlowLogReset()
 }
 
 // Meta gives the commands the state of the server.
@@ -117,6 +211,10 @@ type Env struct {
 
 	// Meta gives INFO and CONFIG GET their data.
 	Meta Meta
+
+	// Operator gives CLIENT LIST, CLIENT KILL and SLOWLOG their data. It can be
+	// nil, and then these commands are errors.
+	Operator Operator
 
 	// Registry holds the commands. COMMAND reads it.
 	Registry *Registry
@@ -148,6 +246,14 @@ type Env struct {
 	// MaxAuthFailures is the number of failed sign ins after which the
 	// connection is closed.
 	MaxAuthFailures int
+
+	// Health returns the error that stopped the storage, or nil. It can be nil,
+	// and then the storage is always healthy.
+	Health func() error
+
+	// AuthLimit limits the failed sign ins of each address. It can be nil, and
+	// then there is no limit by address.
+	AuthLimit AuthLimiter
 
 	nextID atomic.Uint64
 
@@ -207,6 +313,13 @@ type Client struct {
 	// Created is the time of the connection.
 	Created time.Time
 
+	// LAddr is the local address.
+	LAddr string
+
+	mu     sync.Mutex
+	cmd    atomic.Pointer[string]
+	active atomic.Int64
+
 	scan scanState
 	tx   txState
 }
@@ -252,10 +365,13 @@ func (r *Registry) Specs() []*Spec {
 // NewRegistry returns a registry with all the commands of the server.
 func NewRegistry() *Registry {
 	r := &Registry{specs: make(map[string]*Spec)}
-	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), moreStringCommands(), txCommands(), persistenceCommands(), connectionCommands(), metaCommands()} {
+	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), moreStringCommands(), extraStringCommands(), extraKeyCommands(), txCommands(), persistenceCommands(), flushCommands(), connectionCommands(), operatorCommands(), metaCommands()} {
 		for _, s := range list {
 			r.specs[s.Name] = s
 		}
+	}
+	for i, s := range r.Specs() {
+		s.Slot = i
 	}
 	return r
 }

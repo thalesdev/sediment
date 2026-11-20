@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thalesdev/sediment/internal/glob"
 	"github.com/thalesdev/sediment/internal/shale"
 	"github.com/thalesdev/sediment/resp"
 	"github.com/thalesdev/sediment/server/acl"
@@ -24,10 +25,10 @@ var replyBadCursor = resp.Error("ERR invalid cursor")
 // keyspaceCommands returns SCAN, KEYS, DBSIZE, RANDOMKEY and TYPE.
 func keyspaceCommands() []*Spec {
 	return []*Spec{
-		{Name: "scan", Arity: -2, Categories: acl.CatRead | acl.CatKeyspace | acl.CatSlow, Handler: scan},
-		{Name: "keys", Arity: 2, Categories: acl.CatRead | acl.CatKeyspace | acl.CatSlow | acl.CatDangerous, Handler: keysCmd},
+		{Name: "scan", Arity: -2, Categories: acl.CatRead | acl.CatKeyspace | acl.CatSlow, ListsKeys: true, Handler: scan},
+		{Name: "keys", Arity: 2, Categories: acl.CatRead | acl.CatKeyspace | acl.CatSlow | acl.CatDangerous, ListsKeys: true, Handler: keysCmd},
 		{Name: "dbsize", Arity: 1, Categories: acl.CatRead | acl.CatKeyspace | acl.CatSlow, Handler: dbsize},
-		{Name: "randomkey", Arity: 1, Categories: acl.CatRead | acl.CatKeyspace | acl.CatSlow, Handler: randomkey},
+		{Name: "randomkey", Arity: 1, Categories: acl.CatRead | acl.CatKeyspace | acl.CatSlow, ListsKeys: true, Handler: randomkey},
 		{Name: "type", Arity: 2, Categories: acl.CatRead | acl.CatKeyspace | acl.CatFast, FirstKey: 1, LastKey: 1, KeyStep: 1, Handler: typeCmd},
 	}
 }
@@ -148,7 +149,7 @@ func scan(env *Env, c *Client, args [][]byte) resp.Value {
 		if err != nil {
 			return env.storageError("scan", err)
 		}
-		if live && (wantType == "" || rec.typ.name() == wantType) && (matchAll(pattern) || globMatch(pattern, user)) {
+		if live && (wantType == "" || rec.typ.name() == wantType) && (matchAll(pattern) || glob.Match(pattern, user)) {
 			if env.MaxReply > 0 && total+len(user) > env.MaxReply && len(page) > 0 {
 				break
 			}
@@ -191,7 +192,7 @@ func keysCmd(env *Env, _ *Client, args [][]byte) resp.Value {
 		if err != nil {
 			return env.storageError("keys", err)
 		}
-		if !live || !(matchAll(pattern) || globMatch(pattern, user)) {
+		if !live || !(matchAll(pattern) || glob.Match(pattern, user)) {
 			continue
 		}
 		total += len(user)

@@ -8,6 +8,10 @@ updates:
     directory: /compat
     schedule:
       interval: weekly
+  - package-ecosystem: gomod
+    directory: /cmd/sedimentd
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: /
     schedule:

@@ -49,23 +49,34 @@ closes the connection, so that a web page cannot talk to the server.
 | Command | State | Notes |
 |---|---|---|
 | `GET` | [x] | |
-| `SET` | [x] | `NX`, `XX`, `GET`, `EX`, `PX`, `EXAT`, `PXAT` and `KEEPTTL`. A plain `SET` removes the TTL. |
+| `SET` | [x] | `NX`, `XX`, `IFEQ`, `IFNE`, `IFDEQ`, `IFDNE`, `GET`, `EX`, `PX`, `EXAT`, `PXAT` and `KEEPTTL`. A plain `SET` removes the TTL. |
 | `DEL` | [x] | Many keys are one atomic write. |
+| `DIGEST` | [x] | The XXH3 64-bit hash of a string as 16 hex digits, as Redis 8.4. |
+| `DELEX` | [x] | `DEL` with `IFEQ`, `IFNE`, `IFDEQ` and `IFDNE`. Replies 1 or 0. |
+| `MSETEX` | [x] | Many keys with one expiry in one write, with `NX`, `XX` or `KEEPTTL`. Replies 1 or 0. |
+| `SETBIT`, `GETBIT` | [x] | Offsets up to 2^32 - 1, within the limit of the size of a string. |
+| `LCS` | [x] | `LEN`, `IDX`, `MINMATCHLEN` and `WITHMATCHLEN`. A table of more than 16 million cells is refused. |
+| `SUBSTR` | [x] | The same as `GETRANGE`. |
+| `COPY` | [x] | Any type, with its expiry. `REPLACE`. `DB` accepts only 0. A collection of up to a million elements. |
+| `TOUCH`, `TIME` | [x] | `TOUCH` counts the keys that exist. |
+| `RESET` | [x] | Drops the transaction, the watched keys, the name and the protocol, and signs the client out. |
+| `OBJECT` | [x] | `ENCODING`, `REFCOUNT` and `HELP`. `FREQ` and `IDLETIME` answer an error, because the server does not track them. |
+| `FLUSHALL`, `FLUSHDB` | [x] | The same command, because there is only database 0. `ASYNC` and `SYNC` are accepted and do nothing. It is one atomic write with a range delete for each class of key, and it keeps the format record. It takes every lock, makes every `WATCH` fail, and needs `@dangerous` and the right to write every key (`~*`). It is refused inside `MULTI`. |
 | `EXISTS` | [x] | |
 | `MGET` | [x] | The reply has a size limit. |
 | `MSET` | [x] | One atomic write. |
-| `PING`, `ECHO`, `QUIT` | [x] | |
+| `PING`, `ECHO`, `QUIT` | [x] | `PING` answers `-MISCONF` if the storage stopped after an error, and `-LOADING` while the node opens its data. `sedimentd healthcheck` uses it. |
 | `SELECT` | [x] | Only database 0. |
 | `HELLO` | [x] | `AUTH` and `SETNAME` options. |
 | `AUTH` | [x] | `AUTH password` and `AUTH user password`. |
-| `CLIENT` | [x] | `ID`, `SETNAME`, `GETNAME`, `SETINFO`, `INFO`. |
-| `CLIENT LIST`, `KILL`, `PAUSE`, `TRACKING` | [ ] | |
-| `COMMAND` | [x] | `COUNT`, `LIST`, `INFO`, `DOCS` (empty). |
-| `INFO` | [x] | Sections `server`, `clients`, `stats`, `persistence`, `shale`, `runtime`. |
+| `CLIENT` | [x] | `ID`, `SETNAME`, `GETNAME`, `SETINFO`, `INFO`, `LIST` (with `ID` and `TYPE normal`) and `KILL` (the old form with an address, and `ID`, `ADDR`, `LADDR`, `USER`, `SKIPME`). `LIST` and `KILL` need `@admin` and `@dangerous`. |
+| `CLIENT PAUSE`, `TRACKING` | [ ] | |
+| `SLOWLOG` | [x] | `GET [count]`, `LEN`, `RESET`. An entry has the name of the command and the number of its arguments, never an argument. See `slowlog-log-slower-than` and `slowlog-max-len`. |
+| `COMMAND` | [x] | `COUNT`, `LIST`, `INFO`, `DOCS` (empty), `GETKEYS` and `GETKEYSANDFLAGS`. |
+| `INFO` | [x] | Sections `server` (with `loading` and `storage`), `clients`, `stats`, `cpu`, `persistence`, `shale`, `runtime`. While the node opens its data, `INFO` shows `loading:1` and every other command gets a `LOADING` error. |
 | `CONFIG GET` | [x] | Read only, no file names. |
 | `CONFIG SET`, `REWRITE` | [ ] | On purpose. See [SECURITY.md](../SECURITY.md). |
-| `ACL WHOAMI`, `USERS`, `LIST`, `LOAD`, `CAT` | [x] | Only for users with `@admin`. |
-| `ACL SETUSER`, `DELUSER`, `SAVE`, `GETUSER`, `LOG` | [ ] | ACL phase 2. |
+| `ACL WHOAMI`, `USERS`, `LIST`, `LOAD`, `CAT`, `SETUSER`, `DELUSER`, `GETUSER`, `SAVE`, `LOG` | [x] | Only for users with `@admin`. `SETUSER` changes a user whole or not at all. `DELUSER` never removes `default`. `SAVE` writes the file with mode 600. `LOG` keeps 128 entries and never a key. A change of the users closes the connections of a user that is gone or off. |
 | `INCR`, `DECR`, `INCRBY`, `DECRBY` | [x] | Atomic. Overflow is an error. |
 | `APPEND`, `STRLEN` | [x] | A string is limited to 16 MiB. |
 | `SETNX`, `GETSET`, `GETDEL` | [x] | Atomic. |
@@ -87,6 +98,8 @@ closes the connection, so that a web page cannot talk to the server.
 | `HGETALL`, `HKEYS`, `HVALS` | [x] | One snapshot. The reply is a map in RESP3, and it has a size limit. The fields come in byte order. |
 | `HSCAN` | [x] | `MATCH` and `COUNT`. A scan ends if the hash is deleted and made again. |
 | `SADD`, `SREM`, `SPOP`, `SISMEMBER`, `SMISMEMBER`, `SCARD`, `SMEMBERS`, `SRANDMEMBER`, `SSCAN` | [x] | A set with no member goes away. `SMEMBERS` is a set in RESP3. `SPOP` and `SRANDMEMBER` read the set in one pass, and `SRANDMEMBER` with a negative count reads sets of up to 100000 members. |
+| `SMOVE` | [x] | One atomic write. A source that becomes empty goes away. |
+| `SINTERCARD`, `SUNIONCARD`, `SDIFFCARD` | [x] | `LIMIT` stops the count. `APPROX` of `SUNIONCARD` is accepted and does nothing. |
 | `SUNION`, `SINTER`, `SDIFF`, `SUNIONSTORE`, `SINTERSTORE`, `SDIFFSTORE` | [x] | All the sets are read as of one snapshot. The `STORE` versions replace the destination in one write. |
 | Lists, sorted sets, streams | [ ] | After v1.0. |
 | `EVAL`, `FUNCTION`, `MODULE`, `DEBUG`, `REPLICAOF`, `SLAVEOF` | never | The source of most Redis CVEs. |
@@ -103,11 +116,12 @@ The users are in a file with the line format of the Redis ACL file.
 | `sedimentd hash-password` makes the `$pbkdf2-sha256$` hash from a password on standard input | [x] |
 | `+@category`, `-@category`, `+command`, `-command`, `allcommands`, `nocommands` | [x] |
 | `~*` and `allkeys` | [x] |
-| Key patterns (`~prefix:*`, `%R~`, `%W~`) | [ ] The file is refused, it is not ignored. |
-| Rules for subcommands (`+config\|get`) | [ ] The file is refused. |
-| `ACL SETUSER` at run time, `ACL SAVE`, `ACL LOG`, selectors | [ ] |
+| Key patterns (`~prefix:*`, `%R~`, `%W~`, `%RW~`, `resetkeys`) | [x] A user with no pattern reaches no key. `KEYS`, `SCAN` and `RANDOMKEY` need the right to read every key. |
+| Rules for subcommands (`+config\|get`, `-client\|kill`) | [x] An unknown subcommand is an error. |
+| Selectors `(~app:* +get)` and `clearselectors` | [x] A selector is a second set of rules, and a command is allowed if any set allows it. |
+| `ACL SETUSER`, `DELUSER`, `GETUSER`, `SAVE`, `LOG` at run time | [x] |
 | Channel patterns | [ ] Accepted, there are no channels yet. |
-| User from the CN of a client certificate | [ ] |
+| User from the CN of a client certificate (`certonly`, `tls-auth-clients-user yes`) | [x] Only for a user with the rule `certonly`, which can not sign in with a password. |
 
 ## Limits
 
@@ -133,5 +147,6 @@ in gets the smaller pre-sign-in limits.
 | Time to take a reply | 30 s | |
 | TLS handshake | 10 s | |
 | Failed sign ins before the close | 5, each one waits longer | |
+| Failed sign ins of one address (`auth-fail-limit`, `auth-fail-window`) | 20 in 60 s, then the address is refused | |
 | Cache of data blocks (`block-cache-size`) | 64 MiB | |
 | Memtable (`memtable-size`) | 64 MiB, at most 1 GiB | |

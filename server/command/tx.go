@@ -135,6 +135,9 @@ func (c *Client) runlockStripes(env *Env, stripes []int) {
 
 // KeysOf returns the keys of a command, from the positions in its Spec.
 func KeysOf(spec *Spec, args [][]byte) [][]byte {
+	if spec.KeyFunc != nil {
+		return spec.KeyFunc(args)
+	}
 	if spec.FirstKey <= 0 {
 		return nil
 	}
@@ -143,6 +146,12 @@ func KeysOf(spec *Spec, args [][]byte) [][]byte {
 		last = len(args) + last
 	}
 	step := max(spec.KeyStep, 1)
+	if step == 1 {
+		if spec.FirstKey >= len(args) {
+			return nil
+		}
+		return args[spec.FirstKey:min(last+1, len(args))]
+	}
 	var keys [][]byte
 	for i := spec.FirstKey; i <= last && i < len(args); i += step {
 		keys = append(keys, args[i])
@@ -254,6 +263,11 @@ func (e *Env) changed(w watchEntry) bool {
 	return w.live && w.deadline != 0 && w.deadline <= e.nowMillis()
 }
 
+// ReplySize returns the number of bytes of text in a reply.
+func ReplySize(v resp.Value) int {
+	return replyBytes(v)
+}
+
 // replyBytes returns the number of bytes of text in a reply.
 func replyBytes(v resp.Value) int {
 	n := len(v.Bytes)
@@ -312,9 +326,11 @@ func execCmd(env *Env, c *Client, _ [][]byte) resp.Value {
 	replies := make([]resp.Value, len(queue))
 	total := 0
 	for i, q := range queue {
-		if env.Access != nil && !q.spec.NoAuth && !env.Access.Allowed(c.User, q.spec.Name, q.spec.Categories) {
-			replies[i] = resp.Error("NOPERM User " + printable([]byte(c.User), 64) + " has no permissions to run the '" + q.spec.Name + "' command")
-			continue
+		if env.Access != nil && !q.spec.NoAuth {
+			if reason := env.Check(c.User, q.spec, q.args); reason != "" {
+				replies[i] = env.Deny(c, q.spec, q.args, reason, "multi")
+				continue
+			}
 		}
 		replies[i] = runQueued(env, c, q)
 		total += replyBytes(replies[i])

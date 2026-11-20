@@ -4,6 +4,7 @@ package command
 
 import (
 	"bytes"
+	"math"
 	"math/rand/v2"
 	"slices"
 
@@ -49,6 +50,10 @@ func setCommands() []*Spec {
 		many("sunionstore", -3, acl.CatWrite|acl.CatSet|acl.CatSlow, 1, setOp(opUnion, true)),
 		many("sinterstore", -3, acl.CatWrite|acl.CatSet|acl.CatSlow, 1, setOp(opInter, true)),
 		many("sdiffstore", -3, acl.CatWrite|acl.CatSet|acl.CatSlow, 1, setOp(opDiff, true)),
+		{Name: "smove", Arity: 4, Categories: write, FirstKey: 1, LastKey: 2, KeyStep: 1, Handler: smove},
+		{Name: "sintercard", Arity: -3, Categories: slow, KeyFunc: cardKeys, Handler: setCard(opInter)},
+		{Name: "sunioncard", Arity: -3, Categories: slow, KeyFunc: cardKeys, Handler: setCard(opUnion)},
+		{Name: "sdiffcard", Arity: -3, Categories: slow, KeyFunc: cardKeys, Handler: setCard(opDiff)},
 	}
 }
 
@@ -340,6 +345,9 @@ func srandmember(env *Env, _ *Client, args [][]byte) resp.Value {
 	n, given, bad, ok := parseCount(args[2:])
 	if !ok {
 		return bad
+	}
+	if given && n == math.MinInt64 {
+		return replyOutOfRange
 	}
 	if bad, ok := env.checkKey(key); !ok {
 		return bad

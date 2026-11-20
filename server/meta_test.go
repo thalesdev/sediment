@@ -110,7 +110,7 @@ func TestClient(t *testing.T) {
 	})
 
 	t.Run("Should refuse an unknown subcommand", func(t *testing.T) {
-		wantError(t, c.do("CLIENT", "KILL"), "ERR unknown subcommand 'KILL'")
+		wantError(t, c.do("CLIENT", "PAUSE"), "ERR unknown subcommand 'PAUSE'")
 	})
 }
 

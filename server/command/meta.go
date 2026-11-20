@@ -5,6 +5,7 @@ package command
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/thalesdev/sediment/resp"
 	"github.com/thalesdev/sediment/server/acl"
@@ -18,10 +19,10 @@ func itoa(n int64) string {
 // metaCommands returns COMMAND, INFO, ACL and CONFIG.
 func metaCommands() []*Spec {
 	return []*Spec{
-		{Name: "command", Arity: -1, Categories: acl.CatSlow | acl.CatConnection, Handler: commandCmd},
+		{Name: "command", Arity: -1, Categories: acl.CatSlow | acl.CatConnection, Subs: []string{"info", "count", "list", "docs", "getkeys", "getkeysandflags"}, Handler: commandCmd},
 		{Name: "info", Arity: -1, Categories: acl.CatSlow | acl.CatDangerous, Handler: info},
-		{Name: "acl", Arity: -2, Categories: acl.CatSlow | acl.CatAdmin | acl.CatDangerous, Handler: aclCmd},
-		{Name: "config", Arity: -2, Categories: acl.CatSlow | acl.CatAdmin | acl.CatDangerous, Handler: config},
+		{Name: "acl", Arity: -2, Categories: acl.CatSlow | acl.CatAdmin | acl.CatDangerous, Subs: []string{"whoami", "cat", "users", "list", "load", "setuser", "deluser", "getuser", "save", "log"}, Handler: aclCmd},
+		{Name: "config", Arity: -2, Categories: acl.CatSlow | acl.CatAdmin | acl.CatDangerous, Subs: []string{"get"}, Handler: config},
 	}
 }
 
@@ -84,6 +85,10 @@ func commandCmd(env *Env, _ *Client, args [][]byte) resp.Value {
 		return resp.Array(out...)
 	case "DOCS":
 		return resp.Map()
+	case "GETKEYS":
+		return commandKeys(env, args, false)
+	case "GETKEYSANDFLAGS":
+		return commandKeys(env, args, true)
 	case "INFO":
 		out := make([]resp.Value, 0, len(args)-2)
 		for _, name := range args[2:] {
@@ -114,6 +119,9 @@ func specInfo(s *Spec) resp.Value {
 	}
 	if s.NoAuth {
 		flags = append(flags, resp.Simple("no_auth"))
+	}
+	if s.KeyFunc != nil {
+		flags = append(flags, resp.Simple("movablekeys"))
 	}
 	cats := make([]resp.Value, 0, 4)
 	for _, n := range s.Categories.Names() {
@@ -171,7 +179,146 @@ func aclCmd(env *Env, c *Client, args [][]byte) resp.Value {
 				env.Log.Warn("acl", "warning", w)
 			}
 		}
+		closeStaleUsers(env, c)
 		return replyOK
+	case "SETUSER":
+		if len(args) < 3 {
+			return WrongArgs("acl|setuser")
+		}
+		rules := make([]string, len(args)-3)
+		for i, a := range args[3:] {
+			rules[i] = string(a)
+		}
+		warnings, err := env.Access.SetUser(string(args[2]), rules)
+		if err != nil {
+			return resp.Error("ERR Error in ACL SETUSER modifier: " + printable([]byte(err.Error()), 200))
+		}
+		logWarnings(env, warnings)
+		closeStaleUsers(env, c)
+		return replyOK
+	case "DELUSER":
+		if len(args) < 3 {
+			return WrongArgs("acl|deluser")
+		}
+		names := make([]string, len(args)-2)
+		for i, a := range args[2:] {
+			names[i] = string(a)
+		}
+		n, err := env.Access.DelUser(names)
+		if err != nil {
+			return resp.Error("ERR " + printable([]byte(err.Error()), 200))
+		}
+		closeStaleUsers(env, c)
+		return resp.Integer(int64(n))
+	case "GETUSER":
+		if len(args) != 3 {
+			return WrongArgs("acl|getuser")
+		}
+		info, ok := env.Access.Info(string(args[2]))
+		if !ok {
+			return resp.Null()
+		}
+		return userInfoReply(info)
+	case "SAVE":
+		if len(args) != 2 {
+			return WrongArgs("acl|save")
+		}
+		if err := env.Access.Save(); err != nil {
+			if env.Log != nil {
+				env.Log.Error("acl save failed", "err", err)
+			}
+			return resp.Error("ERR the ACL file was not saved: " + printable([]byte(err.Error()), 200))
+		}
+		return replyOK
+	case "LOG":
+		return aclLog(env, args)
 	}
 	return resp.Error("ERR unknown subcommand '" + printable(args[1], 32) + "' of ACL")
+}
+
+// logWarnings logs the warnings of a change of the users.
+func logWarnings(env *Env, warnings []string) {
+	if env.Log == nil {
+		return
+	}
+	for _, w := range warnings {
+		env.Log.Warn("acl", "warning", w)
+	}
+}
+
+// closeStaleUsers closes the connections of the users that no longer exist or are
+// off, after a change of the users. If the user of the caller is one of them, the
+// connection of the caller closes after its reply.
+func closeStaleUsers(env *Env, c *Client) {
+	if env.Operator != nil {
+		env.Operator.CloseWhere(env.Access.Active, c.ID)
+	}
+	if !env.Access.Active(c.User) {
+		c.Close = true
+	}
+}
+
+// userInfoReply returns the reply of ACL GETUSER.
+func userInfoReply(info acl.UserInfo) resp.Value {
+	list := func(items []string) resp.Value {
+		out := make([]resp.Value, len(items))
+		for i, s := range items {
+			out[i] = resp.BulkString(s)
+		}
+		return resp.Array(out...)
+	}
+	selectors := make([]resp.Value, len(info.Selectors))
+	for i, s := range info.Selectors {
+		selectors[i] = resp.Map(
+			resp.BulkString("commands"), resp.BulkString(s.Commands),
+			resp.BulkString("keys"), resp.BulkString(s.Keys),
+			resp.BulkString("channels"), resp.BulkString(""),
+		)
+	}
+	return resp.Map(
+		resp.BulkString("flags"), list(info.Flags),
+		resp.BulkString("passwords"), list(info.Passwords),
+		resp.BulkString("commands"), resp.BulkString(info.Commands),
+		resp.BulkString("keys"), resp.BulkString(info.Keys),
+		resp.BulkString("channels"), resp.BulkString(""),
+		resp.BulkString("selectors"), resp.Array(selectors...),
+	)
+}
+
+// aclLog is ACL LOG [count | RESET].
+func aclLog(env *Env, args [][]byte) resp.Value {
+	n := 10
+	switch len(args) {
+	case 2:
+	case 3:
+		if strings.EqualFold(string(args[2]), "RESET") {
+			env.Access.LogReset()
+			return replyOK
+		}
+		v, ok := parseInt(args[2])
+		if !ok || v < 0 {
+			return resp.Error("ERR value is out of range, must be positive")
+		}
+		n = toInt(v)
+	default:
+		return WrongArgs("acl|log")
+	}
+	now := time.Now()
+	entries := env.Access.LogEntries(n)
+	out := make([]resp.Value, len(entries))
+	for i, e := range entries {
+		out[i] = resp.Map(
+			resp.BulkString("count"), resp.Integer(1),
+			resp.BulkString("reason"), resp.BulkString(e.Reason),
+			resp.BulkString("context"), resp.BulkString(e.Context),
+			resp.BulkString("object"), resp.BulkString(e.Object),
+			resp.BulkString("username"), resp.BulkString(e.User),
+			resp.BulkString("age-seconds"), resp.BulkString(strconv.FormatFloat(now.Sub(e.At).Seconds(), 'f', 3, 64)),
+			resp.BulkString("client-info"), resp.BulkString(e.Client),
+			resp.BulkString("entry-id"), resp.Integer(int64(e.ID)),
+			resp.BulkString("timestamp-created"), resp.Integer(e.At.UnixMilli()),
+			resp.BulkString("timestamp-last-updated"), resp.Integer(e.At.UnixMilli()),
+		)
+	}
+	return resp.Array(out...)
 }

@@ -21,12 +21,17 @@ func connectionCommands() []*Spec {
 		{Name: "select", Arity: 2, Categories: connFast, Handler: selectDB},
 		{Name: "auth", Arity: -2, Categories: connFast, NoAuth: true, Tx: TxNoQueue, Handler: auth},
 		{Name: "hello", Arity: -1, Categories: connFast, NoAuth: true, Tx: TxNoQueue, Handler: hello},
-		{Name: "client", Arity: -2, Categories: acl.CatSlow | acl.CatConnection, Handler: clientCmd},
+		{Name: "client", Arity: -2, Categories: acl.CatSlow | acl.CatConnection, Subs: []string{"id", "getname", "setname", "setinfo", "info", "list", "kill"}, Handler: clientCmd},
 	}
 }
 
 // ping is PING [message].
-func ping(_ *Env, _ *Client, args [][]byte) resp.Value {
+func ping(env *Env, _ *Client, args [][]byte) resp.Value {
+	if env.Health != nil {
+		if err := env.Health(); err != nil {
+			return resp.Error("MISCONF the database stopped after an error and refuses writes, see the log of the server")
+		}
+	}
 	switch len(args) {
 	case 1:
 		return resp.Simple("PONG")
@@ -65,13 +70,27 @@ func signIn(env *Env, c *Client, user string, password []byte) (resp.Value, bool
 	if env.Access == nil {
 		return resp.Error("ERR AUTH called without any password configured. Are you sure your configuration is correct?"), false
 	}
+	if env.AuthLimit != nil && env.AuthLimit.Blocked(c.Addr) {
+		if env.Log != nil {
+			env.Log.Warn("sign in refused, too many failures from this address", "addr", c.Addr)
+		}
+		c.Close = true
+		return resp.Error("ERR too many failed sign ins from this address, try again later"), false
+	}
 	if env.Access.Authenticate(user, password) {
-		c.User = user
+		c.setUser(user)
 		c.Authed = true
 		c.AuthFailures = 0
 		return resp.Value{}, true
 	}
 	c.AuthFailures++
+	env.Access.Record("auth", "toplevel", "AUTH", printable([]byte(user), 64), strings.TrimSpace(c.Info().line(time.Now())))
+	if env.AuthLimit != nil {
+		env.AuthLimit.Failed(c.Addr)
+	}
+	if env.Log != nil {
+		env.Log.Warn("sign in failed", "user", printable([]byte(user), 64), "addr", c.Addr, "failures", c.AuthFailures)
+	}
 	delay := env.AuthDelay
 	for i := 1; i < c.AuthFailures && delay < env.AuthDelayMax; i++ {
 		delay *= 2
@@ -164,9 +183,9 @@ func hello(env *Env, c *Client, args [][]byte) resp.Value {
 	} else if !c.Authed {
 		return resp.Error("NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time")
 	}
-	c.Proto = proto
+	c.setProto(proto)
 	if withName {
-		c.Name = string(name)
+		c.setName(string(name))
 	}
 	return resp.Map(
 		resp.BulkString("server"), resp.BulkString("sediment"),
@@ -179,8 +198,8 @@ func hello(env *Env, c *Client, args [][]byte) resp.Value {
 	)
 }
 
-// clientCmd is CLIENT ID, SETNAME, GETNAME, SETINFO and INFO.
-func clientCmd(_ *Env, c *Client, args [][]byte) resp.Value {
+// clientCmd is CLIENT ID, SETNAME, GETNAME, SETINFO, INFO, LIST and KILL.
+func clientCmd(env *Env, c *Client, args [][]byte) resp.Value {
 	switch strings.ToUpper(string(args[1])) {
 	case "ID":
 		if len(args) != 2 {
@@ -202,7 +221,7 @@ func clientCmd(_ *Env, c *Client, args [][]byte) resp.Value {
 		if !validName(args[2]) {
 			return resp.Error("ERR Client names cannot contain spaces, newlines or special characters.")
 		}
-		c.Name = string(args[2])
+		c.setName(string(args[2]))
 		return replyOK
 	case "SETINFO":
 		return clientSetInfo(c, args)
@@ -210,7 +229,11 @@ func clientCmd(_ *Env, c *Client, args [][]byte) resp.Value {
 		if len(args) != 2 {
 			return WrongArgs("client|info")
 		}
-		return resp.Value{Kind: resp.KindVerbatim, Bytes: []byte(clientInfo(c)), Format: "txt"}
+		return resp.Value{Kind: resp.KindVerbatim, Bytes: []byte(c.Info().line(time.Now())), Format: "txt"}
+	case "LIST":
+		return clientList(env, c, args)
+	case "KILL":
+		return clientKill(env, c, args)
 	}
 	return resp.Error("ERR unknown subcommand '" + printable(args[1], 32) + "' of CLIENT")
 }
@@ -225,32 +248,11 @@ func clientSetInfo(c *Client, args [][]byte) resp.Value {
 	}
 	switch strings.ToUpper(string(args[2])) {
 	case "LIB-NAME":
-		c.LibName = string(args[3])
+		c.setLib(string(args[3]), "")
 	case "LIB-VER":
-		c.LibVer = string(args[3])
+		c.setLib("", string(args[3]))
 	default:
 		return resp.Error("ERR Unrecognized option '" + printable(args[2], 32) + "'")
 	}
 	return replyOK
-}
-
-// clientInfo returns the CLIENT INFO line of c.
-func clientInfo(c *Client) string {
-	var b strings.Builder
-	b.WriteString("id=")
-	b.WriteString(itoa(int64(c.ID)))
-	b.WriteString(" addr=")
-	b.WriteString(c.Addr)
-	b.WriteString(" name=")
-	b.WriteString(c.Name)
-	b.WriteString(" resp=")
-	b.WriteString(itoa(int64(c.Proto)))
-	b.WriteString(" user=")
-	b.WriteString(c.User)
-	b.WriteString(" lib-name=")
-	b.WriteString(c.LibName)
-	b.WriteString(" lib-ver=")
-	b.WriteString(c.LibVer)
-	b.WriteString("\n")
-	return b.String()
 }
