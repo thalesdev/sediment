@@ -137,6 +137,32 @@ func TestDropIter(t *testing.T) {
 		}
 	})
 
+	t.Run("Should drop the entries that a range delete covers", func(t *testing.T) {
+		src := newSliceSource(entry{"a", 4, put, "a4"}, entry{"b", 6, put, "b6"}, entry{"b", 2, put, "b2"}, entry{"c", 3, del, ""}, entry{"d", 9, put, "d9"})
+		d := newDropIter(src, false)
+		d.cover = newTombIndex([]rangeTomb{{start: []byte("b"), end: []byte("d"), seq: 7}})
+		assertEntries(t, drainDrop(t, d), []entry{{"a", 4, put, "a4"}, {"d", 9, put, "d9"}})
+	})
+
+	t.Run("Should keep an entry that is newer than the range delete", func(t *testing.T) {
+		src := newSliceSource(entry{"b", 8, put, "b8"}, entry{"b", 2, put, "b2"})
+		d := newDropIter(src, false)
+		d.cover = newTombIndex([]rangeTomb{{start: []byte("a"), end: []byte("z"), seq: 5}})
+		assertEntries(t, drainDrop(t, d), []entry{{"b", 8, put, "b8"}})
+	})
+
+	t.Run("Should not call the filter for an entry that a range delete covers", func(t *testing.T) {
+		src := newSliceSource(entry{"a", 3, put, "x"}, entry{"b", 3, put, "y"})
+		d := newDropIter(src, false)
+		d.cover = newTombIndex([]rangeTomb{{start: []byte("a"), end: []byte("b"), seq: 9}})
+		var seen []string
+		d.filter = func(key, value []byte) bool { seen = append(seen, string(key)); return false }
+		assertEntries(t, drainDrop(t, d), []entry{{"b", 3, put, "y"}})
+		if fmt.Sprint(seen) != "[b]" {
+			t.Fatalf("the filter saw %v", seen)
+		}
+	})
+
 	t.Run("Should be empty when it drops everything", func(t *testing.T) {
 		src := newSliceSource(entry{"a", 9, del, ""}, entry{"a", 5, put, "v5"}, entry{"b", 4, del, ""})
 		d := newDropIter(src, true)
@@ -202,6 +228,11 @@ func checkSeqInvariant(t testing.TB, db *DB) {
 		}
 		if err := it.Err(); err != nil {
 			t.Fatal(err)
+		}
+		for _, tomb := range tbl.tombs {
+			if tomb.seq < tbl.meta.SmallestSeq || tomb.seq > tbl.meta.LargestSeq {
+				t.Fatalf("table %d has a range delete with sequence number %d outside of %d to %d", tbl.meta.Number, tomb.seq, tbl.meta.SmallestSeq, tbl.meta.LargestSeq)
+			}
 		}
 		it.Close()
 	}

@@ -23,9 +23,11 @@ func (c *conn) execute(args [][]byte) (reply resp.Value) {
 	s := c.s
 	spec := s.reg.Lookup(args[0])
 	if spec == nil {
+		c.client.MarkTxDirty()
 		return resp.Error("ERR unknown command '" + printable(args[0], 64) + "'" + argsPreview(args[1:]))
 	}
 	if (spec.Arity > 0 && len(args) != spec.Arity) || (spec.Arity < 0 && len(args) < -spec.Arity) {
+		c.client.MarkTxDirty()
 		return command.WrongArgs(spec.Name)
 	}
 	if !c.client.Authed && !spec.NoAuth {
@@ -34,7 +36,16 @@ func (c *conn) execute(args [][]byte) (reply resp.Value) {
 	}
 	if s.opts.Access != nil && !spec.NoAuth && !s.opts.Access.Allowed(c.client.User, spec.Name, spec.Categories) {
 		s.deniedCmds.Add(1)
+		c.client.MarkTxDirty()
 		return resp.Error("NOPERM User " + printable([]byte(c.client.User), 64) + " has no permissions to run the '" + spec.Name + "' command")
+	}
+	if c.client.InMulti() {
+		switch spec.Tx {
+		case command.TxQueue:
+			return command.Enqueue(s.env, c.client, spec, args)
+		case command.TxNoQueue:
+			return command.RefuseInTx(c.client)
+		}
 	}
 	s.totalCommands.Add(1)
 	return spec.Handler(s.env, c.client, args)

@@ -61,7 +61,7 @@ closes the connection, so that a web page cannot talk to the server.
 | `CLIENT` | [x] | `ID`, `SETNAME`, `GETNAME`, `SETINFO`, `INFO`. |
 | `CLIENT LIST`, `KILL`, `PAUSE`, `TRACKING` | [ ] | |
 | `COMMAND` | [x] | `COUNT`, `LIST`, `INFO`, `DOCS` (empty). |
-| `INFO` | [x] | Sections `server`, `clients`, `stats`, `shale`, `runtime`. |
+| `INFO` | [x] | Sections `server`, `clients`, `stats`, `persistence`, `shale`, `runtime`. |
 | `CONFIG GET` | [x] | Read only, no file names. |
 | `CONFIG SET`, `REWRITE` | [ ] | On purpose. See [SECURITY.md](../SECURITY.md). |
 | `ACL WHOAMI`, `USERS`, `LIST`, `LOAD`, `CAT` | [x] | Only for users with `@admin`. |
@@ -69,18 +69,26 @@ closes the connection, so that a web page cannot talk to the server.
 | `INCR`, `DECR`, `INCRBY`, `DECRBY` | [x] | Atomic. Overflow is an error. |
 | `APPEND`, `STRLEN` | [x] | A string is limited to 16 MiB. |
 | `SETNX`, `GETSET`, `GETDEL` | [x] | Atomic. |
-| `SETRANGE`, `GETRANGE` | [ ] | |
+| `SETEX`, `PSETEX`, `MSETNX`, `GETEX` | [x] | `MSETNX` sets all the keys or none. `GETEX` takes `EX`, `PX`, `EXAT`, `PXAT` and `PERSIST`. |
+| `SETRANGE`, `GETRANGE`, `INCRBYFLOAT` | [x] | `SETRANGE` pads with zero bytes, and a string is limited to 16 MiB. |
+| `UNLINK`, `RENAME`, `RENAMENX` | [x] | `UNLINK` is `DEL`. `RENAME` keeps the time of the key, and it is one write. |
 | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` | [x] | With `NX`, `XX`, `GT` and `LT`. A time in the past deletes the key. |
 | `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME`, `PERSIST` | [x] | |
 | `SCAN` | [x] | `MATCH`, `COUNT` and `TYPE`. A call looks at up to `COUNT` keys, and `COUNT` is at most 10000. A cursor resumes after the last key that the call looked at, it belongs to the connection, and a connection keeps its 32 newest cursors. An old or foreign cursor is `ERR invalid cursor`. A key that stays in the database for the whole scan is returned. Expired keys are hidden. |
 | `KEYS` | [x] | `@dangerous` and slow: it reads every key that the pattern can match. The reply has a size limit. |
 | `DBSIZE` | [x] | Slow: it counts the live keys, so it reads all of them. |
 | `RANDOMKEY` | [x] | The first live key after a random point, so a key after a large gap is more likely. |
-| `TYPE` | [x] | `string` or `none`. |
-| `MULTI`, `EXEC`, `DISCARD`, `WATCH` | [ ] | Milestone 1 of the [roadmap](../ROADMAP.md). |
-| `SUBSCRIBE`, `PUBLISH` | [ ] | |
-| Hashes and sets | [ ] | Milestone 1 of the [roadmap](../ROADMAP.md). |
-| Lists, sorted sets, streams, `PUBLISH` and `SUBSCRIBE` | [ ] | After v1.0. |
+| `TYPE` | [x] | `string`, `hash`, `set` or `none`. |
+| `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` | [x] | `EXEC` runs the queued commands in order and locks their keys, so no other client writes them in between. An error while a command is queued, a command that is not allowed, or a full queue makes `EXEC` reply `EXECABORT`. A command that fails at `EXEC` does not stop the others. A failed `WATCH` gives a null reply. `AUTH` and `HELLO` are refused after `MULTI`. A reader that takes no lock can see a transaction half applied. There are limits on the commands, the bytes and the watched keys. |
+| `BGSAVE`, `LASTSAVE` | [x] | `BGSAVE` makes a copy of the data in a new directory of `backup-dir`, one at a time. The files are hard links. `@admin` and `@dangerous`. |
+| `SUBSCRIBE`, `PUBLISH` | [ ] | After v1.0. |
+| `HSET`, `HMSET`, `HSETNX`, `HGET`, `HMGET`, `HDEL`, `HEXISTS`, `HLEN`, `HSTRLEN` | [x] | A hash with no field goes away. Each write is one batch. |
+| `HINCRBY`, `HINCRBYFLOAT` | [x] | |
+| `HGETALL`, `HKEYS`, `HVALS` | [x] | One snapshot. The reply is a map in RESP3, and it has a size limit. The fields come in byte order. |
+| `HSCAN` | [x] | `MATCH` and `COUNT`. A scan ends if the hash is deleted and made again. |
+| `SADD`, `SREM`, `SPOP`, `SISMEMBER`, `SMISMEMBER`, `SCARD`, `SMEMBERS`, `SRANDMEMBER`, `SSCAN` | [x] | A set with no member goes away. `SMEMBERS` is a set in RESP3. `SPOP` and `SRANDMEMBER` read the set in one pass, and `SRANDMEMBER` with a negative count reads sets of up to 100000 members. |
+| `SUNION`, `SINTER`, `SDIFF`, `SUNIONSTORE`, `SINTERSTORE`, `SDIFFSTORE` | [x] | All the sets are read as of one snapshot. The `STORE` versions replace the destination in one write. |
+| Lists, sorted sets, streams | [ ] | After v1.0. |
 | `EVAL`, `FUNCTION`, `MODULE`, `DEBUG`, `REPLICAOF`, `SLAVEOF` | never | The source of most Redis CVEs. |
 
 ## ACL
@@ -112,9 +120,12 @@ in gets the smaller pre-sign-in limits.
 | Arguments of a command | 1024 | 8 |
 | Bytes of one command | 32 MiB | 4 KiB |
 | Inline line | 64 KiB | 2 KiB |
-| Key | 64 KiB | |
-| Reply of `MGET`, `KEYS` and a page of `SCAN` | 64 MiB | |
-| `COUNT` of `SCAN` | 10000 | |
+| Key, hash field and set member | 64 KiB | |
+| Reply of `MGET`, `KEYS`, `HGETALL`, `SMEMBERS`, a page of `SCAN` and `EXEC` | 64 MiB | |
+| `COUNT` of `SCAN` and `HSCAN` | 10000 | |
+| Commands in a transaction | 10000 | |
+| Bytes in a transaction | 32 MiB | |
+| Watched keys of a client | 10000 | |
 | Nesting of a value | 32 | 4 |
 | Clients | 10000 | |
 | Idle client | 10 min | 30 s |

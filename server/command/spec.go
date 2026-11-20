@@ -5,6 +5,7 @@ package command
 import (
 	"log/slog"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +37,9 @@ type Spec struct {
 	// in the COMMAND reply. A command without keys has 0 in each.
 	FirstKey, LastKey, KeyStep int
 
+	// Tx says how the command behaves between MULTI and EXEC.
+	Tx TxMode
+
 	// Handler runs the command.
 	Handler Handler
 }
@@ -57,6 +61,12 @@ type Store interface {
 	// NewIterator returns an iterator over the keys, as of now. The caller must
 	// close it.
 	NewIterator(opts *shale.IterOptions) (shale.Iterator, error)
+
+	// Checkpoint makes a copy of the data in a new directory.
+	Checkpoint(dir string) (shale.CheckpointInfo, error)
+
+	// Snapshot returns a view of the keys as of now. The caller must release it.
+	Snapshot() (*shale.Snapshot, error)
 
 	// Metrics returns the counts of the storage.
 	Metrics() shale.Metrics
@@ -140,6 +150,23 @@ type Env struct {
 	MaxAuthFailures int
 
 	nextID atomic.Uint64
+
+	// Backup runs BGSAVE. It can be nil, and then BGSAVE is an error.
+	Backup *Backup
+
+	// Versions counts the writes of each key for WATCH. The server wraps Store
+	// with it. It can be nil, and then WATCH never sees a change.
+	Versions *Versions
+
+	// MaxTxCommands is the largest number of commands that a transaction can
+	// queue, and MaxTxBytes the largest total size of their arguments. MaxWatch is
+	// the largest number of keys that a client can watch. A value that is not
+	// positive is no limit.
+	MaxTxCommands, MaxTxBytes, MaxWatch int
+
+	uidMu    sync.Mutex
+	uidNext  uint64
+	uidLimit uint64
 }
 
 // NextID returns a new client id.
@@ -181,6 +208,7 @@ type Client struct {
 	Created time.Time
 
 	scan scanState
+	tx   txState
 }
 
 // Registry is a set of commands.
@@ -224,7 +252,7 @@ func (r *Registry) Specs() []*Spec {
 // NewRegistry returns a registry with all the commands of the server.
 func NewRegistry() *Registry {
 	r := &Registry{specs: make(map[string]*Spec)}
-	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), connectionCommands(), metaCommands()} {
+	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), moreStringCommands(), txCommands(), persistenceCommands(), connectionCommands(), metaCommands()} {
 		for _, s := range list {
 			r.specs[s.Name] = s
 		}

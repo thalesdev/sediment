@@ -17,10 +17,10 @@ func connectionCommands() []*Spec {
 	return []*Spec{
 		{Name: "ping", Arity: -1, Categories: connFast, Handler: ping},
 		{Name: "echo", Arity: 2, Categories: connFast, Handler: echo},
-		{Name: "quit", Arity: -1, Categories: connFast, NoAuth: true, Handler: quit},
+		{Name: "quit", Arity: -1, Categories: connFast, NoAuth: true, Tx: TxImmediate, Handler: quit},
 		{Name: "select", Arity: 2, Categories: connFast, Handler: selectDB},
-		{Name: "auth", Arity: -2, Categories: connFast, NoAuth: true, Handler: auth},
-		{Name: "hello", Arity: -1, Categories: connFast, NoAuth: true, Handler: hello},
+		{Name: "auth", Arity: -2, Categories: connFast, NoAuth: true, Tx: TxNoQueue, Handler: auth},
+		{Name: "hello", Arity: -1, Categories: connFast, NoAuth: true, Tx: TxNoQueue, Handler: hello},
 		{Name: "client", Arity: -2, Categories: acl.CatSlow | acl.CatConnection, Handler: clientCmd},
 	}
 }

@@ -65,6 +65,10 @@ change the code near them.
 - A write returns only after its record is in the log (and flushed, with
   `Options.Sync`). The memtable is updated after the log, and the sequence number
   is published last.
+- Every engine key of the server goes through `server/command/keyenc.go`, and every value through its record codec. A command never builds a key by hand.
+- A command takes the lock of a key through the client (`cl.lock`), and never through `env.Locks`. `EXEC` holds the locks, and they are not reentrant.
+- A range delete has a sequence number, and it hides a version of a key only if that number is above the one of the version. A source that has a range delete and no version of the key hides the key in every older source, because the sequence ranges of the tables do not overlap.
+- A checkpoint takes only the tables of a state, after a flush, and a directory appears under its name only with a rename, whole.
 - A table is closed and removed only when the last read that uses it ends. A snapshot and an iterator are reads that last: each holds a read state and a sequence number, takes the state before the sequence number as `Get` does, and gives the state back in `Release` or `Close`. Close them before `DB.Close`.
 
 ## Layout
@@ -75,6 +79,8 @@ change the code near them.
 | `resp`, `server`, `server/command`, `server/acl` | The protocol, the connections, the commands and the users |
 | `internal/wal`, `sstable`, `bloom`, `skiplist`, `merge`, `manifest`, `batch`, `ikey` | The parts, one package each |
 | `compat` | goleveldb tests and the twin benchmarks |
+
+The server keeps its keys in the layout of `server/command/keyenc.go`, and a change of that layout is a change of a file format.
 
 Some tests in `internal/shale` use unexported hooks in `Options` (`flushHook`,
 `compactHook`, `getHook`, `iterHook`, `disableCompaction`) and `skipSync`. They are only for

@@ -47,6 +47,10 @@ const (
 
 	// KindPush is a message that the server sends without a request, RESP3.
 	KindPush
+
+	// KindNullArray is the absence of an array: *-1 in RESP2 and _ in RESP3. EXEC
+	// replies with it when a watched key changed.
+	KindNullArray
 )
 
 // Value is a RESP value. It does not depend on the version of the protocol. The
@@ -103,7 +107,12 @@ func BulkString(s string) Value {
 	return Value{Kind: KindBulk, Bytes: []byte(s)}
 }
 
-// Null returns the null value.
+// NullArray returns the absence of an array.
+func NullArray() Value {
+	return Value{Kind: KindNullArray}
+}
+
+// Null returns the absence of a value.
 func Null() Value {
 	return Value{Kind: KindNull}
 }

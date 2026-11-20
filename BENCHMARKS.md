@@ -620,3 +620,27 @@ memtable is 75% full or the tables are 75% of the limit that stops the writes:
   a pipeline of 64. The adaptive version with time slices is a candidate if one core with a pipeline of about 16 is the
   case that matters.
 
+
+### The key layout of the server
+
+The keys of the server got a class and a hash slot (3 bytes), and the value got a header
+with its type and an optional deadline. A command now computes the CRC-16 of its key, and
+allocates the engine key, and the keys of the memtable are in the order of the slot and no
+more in the order of the user key. Measured with the same benchmarks, before and after,
+median of 3 runs of 1 second, 11 cores:
+
+| Benchmark | Before | After |
+|---|---:|---:|
+| `GET`, server layer only (a store that does nothing) | 167 ns | 225 ns |
+| `SET`, server layer only | 326 ns | 378 ns |
+| `GET` from the memtable, in process | 680 ns | 850 ns |
+| `SET` through Shale, in process | 1,430 ns | 1,650 ns |
+| `GET` through the connection loop and the network | 10.3 us | 10.4 us |
+| `SET` with a pipeline of 16, through the network | 1.98 us | 2.03 us |
+
+The server layer pays about 50 ns for each command, and the engine pays 18% to 25% in
+process, because the keys no longer arrive in a pattern that the skip list likes. Through the
+network, which is what a client sees, the difference is inside the noise. The in-process
+`GET` of a table is too noisy to give a number (2.3 us before, 2.7 to 4.1 us after).
+Not tried, because the rule is to measure before an optimization: a stack buffer for the
+key, which the `Store` interface would still make escape, and a slot table.

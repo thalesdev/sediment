@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/thalesdev/sediment/internal/ikey"
 	"github.com/thalesdev/sediment/internal/manifest"
-	"github.com/thalesdev/sediment/internal/skiplist"
 	"github.com/thalesdev/sediment/internal/sstable"
 	"github.com/thalesdev/sediment/internal/wal"
 )
@@ -30,7 +30,7 @@ func (db *DB) makeRoom() error {
 			return db.err
 		}
 		state := db.state.Load()
-		if state.mem.list.ApproximateSize() <= db.opts.memtableSize() {
+		if state.mem.approximateSize() <= db.opts.memtableSize() {
 			return nil
 		}
 		if state.imm != nil {
@@ -135,7 +135,7 @@ func (db *DB) flushLoop() {
 // active memtable, which is the first log that the table does not cover.
 func (db *DB) flush(frozen *memtable, activeLog uint64) (*table, error) {
 	number := db.nextFile.Add(1) - 1
-	meta, err := db.writeTable(frozen.list, number)
+	meta, err := db.writeTable(frozen, number)
 	if err != nil {
 		return nil, err
 	}
@@ -173,11 +173,11 @@ func (db *DB) cleanup(frozen *memtable) error {
 	return removeFile(filepath.Join(db.dir, logName(frozen.wal)))
 }
 
-// writeTable writes the entries of list to the table file with number, flushes
-// the file and the directory, and returns the description of the table, with the
-// range of sequence numbers that the entries have. The list must not be empty
-// and must not change.
-func (db *DB) writeTable(list *skiplist.List, number uint64) (manifest.TableMeta, error) {
+// writeTable writes the entries and the range deletes of m to the table file with
+// number, flushes the file and the directory, and returns the description of the
+// table, with the range of sequence numbers that they have. The memtable must not
+// be empty and must not change.
+func (db *DB) writeTable(m *memtable, number uint64) (manifest.TableMeta, error) {
 	path := filepath.Join(db.dir, tableName(number))
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
@@ -188,7 +188,7 @@ func (db *DB) writeTable(list *skiplist.List, number uint64) (manifest.TableMeta
 		return manifest.TableMeta{}, fmt.Errorf("shale: writing table %s: %w", tableName(number), err)
 	}
 	w := sstable.NewWriter(syncFile{f}, tableOptions())
-	it := list.NewIterator()
+	it := m.list.NewIterator()
 	defer it.Close()
 	var smallest, largest []byte
 	smallestSeq, largestSeq := uint64(ikey.MaxSeq), uint64(0)
@@ -208,8 +208,18 @@ func (db *DB) writeTable(list *skiplist.List, number uint64) (manifest.TableMeta
 			return fail(err)
 		}
 	}
+	tombs := m.rangeTombs()
+	for _, t := range tombs {
+		smallestSeq, largestSeq = min(smallestSeq, t.seq), max(largestSeq, t.seq)
+	}
+	if err := addTombs(w, tombs); err != nil {
+		return fail(err)
+	}
 	if smallest == nil {
-		return fail(fmt.Errorf("the memtable is empty"))
+		if len(tombs) == 0 {
+			return fail(fmt.Errorf("the memtable is empty"))
+		}
+		smallest, largest = tombBounds(tombs)
 	}
 	if err := w.Finish(); err != nil {
 		return fail(err)
@@ -229,4 +239,17 @@ func (db *DB) writeTable(list *skiplist.List, number uint64) (manifest.TableMeta
 		Level: 0, Number: number, Size: uint64(info.Size()), Smallest: smallest, Largest: largest,
 		HasSeq: true, SmallestSeq: smallestSeq, LargestSeq: largestSeq,
 	}, nil
+}
+
+// addTombs adds the range deletes tombs to the table that w writes, in the order
+// that the table keeps them.
+func addTombs(w *sstable.Writer, tombs []rangeTomb) error {
+	sorted := slices.Clone(tombs)
+	sortTombs(sorted)
+	for _, t := range sorted {
+		if err := w.AddRangeDel(tombKey(t), t.end); err != nil {
+			return err
+		}
+	}
+	return nil
 }

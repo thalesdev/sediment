@@ -101,9 +101,9 @@ func TestKeyspace(t *testing.T) {
 		}
 	})
 
-	t.Run("Should return the keys of a page in order and end with cursor 0", func(t *testing.T) {
+	t.Run("Should return a page of COUNT keys with a cursor", func(t *testing.T) {
 		next, keys := scanPage(t, c.do("SCAN", "0", "COUNT", "3"))
-		if next == "0" || !slices.Equal(keys, []string{"other:1", "other:2", "user:000"}) {
+		if next == "0" || len(keys) != 3 {
 			t.Fatalf("cursor %q keys %v", next, keys)
 		}
 	})

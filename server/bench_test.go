@@ -9,6 +9,7 @@ import (
 
 	"github.com/thalesdev/sediment/internal/shale"
 	"github.com/thalesdev/sediment/resp"
+	"github.com/thalesdev/sediment/server/command"
 )
 
 const benchKeys = 100000
@@ -24,7 +25,8 @@ func benchServer(b *testing.B) string {
 	b.Cleanup(func() { db.Close() })
 	var batch shale.Batch
 	for i := range benchKeys {
-		batch.Put(fmt.Appendf(nil, "key:%012d", i), benchValue)
+		k, v := command.EncodeString(fmt.Appendf(nil, "key:%012d", i), benchValue)
+		batch.Put(k, v)
 		if batch.Len() == 1000 {
 			if err := db.Write(&batch); err != nil {
 				b.Fatal(err)

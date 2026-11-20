@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,6 +196,205 @@ func TestGoRedisClient(t *testing.T) {
 		}
 	})
 
+	for _, proto := range []int{2, 3} {
+		t.Run(fmt.Sprintf("Should run the hash commands with go-redis on RESP%d", proto), func(t *testing.T) {
+			ctx := context.Background()
+			rdb := redis.NewClient(&redis.Options{Addr: addr, Protocol: proto})
+			defer rdb.Close()
+			key := fmt.Sprintf("hash%d", proto)
+			if n, err := rdb.HSet(ctx, key, "a", "1", "b", "2", "c", "3").Result(); err != nil || n != 3 {
+				t.Fatalf("HSET: %d, %v", n, err)
+			}
+			if got, err := rdb.HGet(ctx, key, "b").Result(); err != nil || got != "2" {
+				t.Fatalf("HGET: %q, %v", got, err)
+			}
+			all, err := rdb.HGetAll(ctx, key).Result()
+			if err != nil || len(all) != 3 || all["c"] != "3" {
+				t.Fatalf("HGETALL: %v, %v", all, err)
+			}
+			if n, err := rdb.HLen(ctx, key).Result(); err != nil || n != 3 {
+				t.Fatalf("HLEN: %d, %v", n, err)
+			}
+			if ok, err := rdb.HExists(ctx, key, "a").Result(); err != nil || !ok {
+				t.Fatalf("HEXISTS: %v, %v", ok, err)
+			}
+			if n, err := rdb.HIncrBy(ctx, key, "n", 5).Result(); err != nil || n != 5 {
+				t.Fatalf("HINCRBY: %d, %v", n, err)
+			}
+			if f, err := rdb.HIncrByFloat(ctx, key, "f", 1.5).Result(); err != nil || f != 1.5 {
+				t.Fatalf("HINCRBYFLOAT: %v, %v", f, err)
+			}
+			vals, err := rdb.HMGet(ctx, key, "a", "zz").Result()
+			if err != nil || len(vals) != 2 || vals[0] != "1" || vals[1] != nil {
+				t.Fatalf("HMGET: %v, %v", vals, err)
+			}
+			it := rdb.HScan(ctx, key, 0, "*", 2).Iterator()
+			seen := 0
+			for it.Next(ctx) {
+				seen++
+			}
+			if err := it.Err(); err != nil || seen != 10 {
+				t.Fatalf("HSCAN gave %d elements: %v", seen, err)
+			}
+			if n, err := rdb.HDel(ctx, key, "a", "b", "zz").Result(); err != nil || n != 2 {
+				t.Fatalf("HDEL: %d, %v", n, err)
+			}
+			if got, err := rdb.Type(ctx, key).Result(); err != nil || got != "hash" {
+				t.Fatalf("TYPE: %q, %v", got, err)
+			}
+			if err := rdb.Get(ctx, key).Err(); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
+				t.Fatalf("GET of a hash: %v", err)
+			}
+		})
+	}
+
+	for _, proto := range []int{2, 3} {
+		t.Run(fmt.Sprintf("Should run the set commands with go-redis on RESP%d", proto), func(t *testing.T) {
+			ctx := context.Background()
+			rdb := redis.NewClient(&redis.Options{Addr: addr, Protocol: proto})
+			defer rdb.Close()
+			a, b := fmt.Sprintf("seta%d", proto), fmt.Sprintf("setb%d", proto)
+			if n, err := rdb.SAdd(ctx, a, "1", "2", "3", "4").Result(); err != nil || n != 4 {
+				t.Fatalf("SADD: %d, %v", n, err)
+			}
+			if n, err := rdb.SAdd(ctx, b, "3", "4", "5").Result(); err != nil || n != 3 {
+				t.Fatalf("SADD: %d, %v", n, err)
+			}
+			if got, err := rdb.SMembers(ctx, a).Result(); err != nil || len(got) != 4 {
+				t.Fatalf("SMEMBERS: %v, %v", got, err)
+			}
+			if ok, err := rdb.SIsMember(ctx, a, "2").Result(); err != nil || !ok {
+				t.Fatalf("SISMEMBER: %v, %v", ok, err)
+			}
+			if got, err := rdb.SInter(ctx, a, b).Result(); err != nil || len(got) != 2 {
+				t.Fatalf("SINTER: %v, %v", got, err)
+			}
+			if got, err := rdb.SUnion(ctx, a, b).Result(); err != nil || len(got) != 5 {
+				t.Fatalf("SUNION: %v, %v", got, err)
+			}
+			if got, err := rdb.SDiff(ctx, a, b).Result(); err != nil || len(got) != 2 {
+				t.Fatalf("SDIFF: %v, %v", got, err)
+			}
+			if n, err := rdb.SUnionStore(ctx, a+"u", a, b).Result(); err != nil || n != 5 {
+				t.Fatalf("SUNIONSTORE: %d, %v", n, err)
+			}
+			if n, err := rdb.SCard(ctx, a).Result(); err != nil || n != 4 {
+				t.Fatalf("SCARD: %d, %v", n, err)
+			}
+			if n, err := rdb.SRem(ctx, a, "1", "9").Result(); err != nil || n != 1 {
+				t.Fatalf("SREM: %d, %v", n, err)
+			}
+			if got, err := rdb.SPop(ctx, a).Result(); err != nil || got == "" {
+				t.Fatalf("SPOP: %q, %v", got, err)
+			}
+			if got, err := rdb.SRandMemberN(ctx, b, 2).Result(); err != nil || len(got) != 2 {
+				t.Fatalf("SRANDMEMBER: %v, %v", got, err)
+			}
+			it := rdb.SScan(ctx, b, 0, "*", 2).Iterator()
+			seen := 0
+			for it.Next(ctx) {
+				seen++
+			}
+			if err := it.Err(); err != nil || seen != 3 {
+				t.Fatalf("SSCAN saw %d members: %v", seen, err)
+			}
+			if got, err := rdb.Type(ctx, b).Result(); err != nil || got != "set" {
+				t.Fatalf("TYPE: %q, %v", got, err)
+			}
+		})
+	}
+
+	for _, proto := range []int{2, 3} {
+		t.Run(fmt.Sprintf("Should run transactions with go-redis on RESP%d", proto), func(t *testing.T) {
+			ctx := context.Background()
+			rdb := redis.NewClient(&redis.Options{Addr: addr, Protocol: proto})
+			defer rdb.Close()
+			key := fmt.Sprintf("txkey%d", proto)
+			cmds, err := rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+				p.Set(ctx, key, "10", 0)
+				p.Incr(ctx, key)
+				p.Get(ctx, key)
+				return nil
+			})
+			if err != nil || len(cmds) != 3 {
+				t.Fatalf("TxPipelined: %v, %d commands", err, len(cmds))
+			}
+			if got := cmds[2].(*redis.StringCmd).Val(); got != "11" {
+				t.Fatalf("GET inside the transaction: %q", got)
+			}
+			err = rdb.Watch(ctx, func(tx *redis.Tx) error {
+				n, err := tx.Get(ctx, key).Int()
+				if err != nil {
+					return err
+				}
+				if err := rdb.Set(ctx, key, "99", 0).Err(); err != nil {
+					return err
+				}
+				_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+					p.Set(ctx, key, n+1, 0)
+					return nil
+				})
+				return err
+			}, key)
+			if !errors.Is(err, redis.TxFailedErr) {
+				t.Fatalf("a conflicting write should fail the transaction, got %v", err)
+			}
+			err = rdb.Watch(ctx, func(tx *redis.Tx) error {
+				n, err := tx.Get(ctx, key).Int()
+				if err != nil {
+					return err
+				}
+				_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+					p.Set(ctx, key, n+1, 0)
+					return nil
+				})
+				return err
+			}, key)
+			if err != nil {
+				t.Fatalf("Watch without a conflict: %v", err)
+			}
+			if got, err := rdb.Get(ctx, key).Result(); err != nil || got != "100" {
+				t.Fatalf("GET after the transactions: %q, %v", got, err)
+			}
+		})
+	}
+
+	t.Run("Should run the remaining string commands with go-redis", func(t *testing.T) {
+		ctx := context.Background()
+		rdb := redis.NewClient(&redis.Options{Addr: addr})
+		defer rdb.Close()
+		if err := rdb.SetEx(ctx, "more:ex", "v", 30*time.Second).Err(); err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := rdb.MSetNX(ctx, "more:a", "1", "more:b", "2").Result(); err != nil || !ok {
+			t.Fatalf("MSETNX: %v, %v", ok, err)
+		}
+		if ok, err := rdb.MSetNX(ctx, "more:c", "3", "more:a", "9").Result(); err != nil || ok {
+			t.Fatalf("MSETNX over an existing key: %v, %v", ok, err)
+		}
+		if got, err := rdb.GetEx(ctx, "more:ex", time.Minute).Result(); err != nil || got != "v" {
+			t.Fatalf("GETEX: %q, %v", got, err)
+		}
+		if got, err := rdb.GetRange(ctx, "more:ex", 0, 0).Result(); err != nil || got != "v" {
+			t.Fatalf("GETRANGE: %q, %v", got, err)
+		}
+		if n, err := rdb.SetRange(ctx, "more:ex", 3, "x").Result(); err != nil || n != 4 {
+			t.Fatalf("SETRANGE: %d, %v", n, err)
+		}
+		if f, err := rdb.IncrByFloat(ctx, "more:f", 2.5).Result(); err != nil || f != 2.5 {
+			t.Fatalf("INCRBYFLOAT: %v, %v", f, err)
+		}
+		if err := rdb.Rename(ctx, "more:a", "more:z").Err(); err != nil {
+			t.Fatalf("RENAME: %v", err)
+		}
+		if ok, err := rdb.RenameNX(ctx, "more:z", "more:b").Result(); err != nil || ok {
+			t.Fatalf("RENAMENX: %v, %v", ok, err)
+		}
+		if n, err := rdb.Unlink(ctx, "more:z", "more:b").Result(); err != nil || n != 2 {
+			t.Fatalf("UNLINK: %d, %v", n, err)
+		}
+	})
+
 	t.Run("Should pipeline many commands with go-redis", func(t *testing.T) {
 		ctx := context.Background()
 		rdb := redis.NewClient(&redis.Options{Addr: addr})
@@ -276,4 +476,36 @@ func TestGoRedisAuth(t *testing.T) {
 			rdb.Close()
 		}
 	})
+}
+
+func TestGoRedisBgSave(t *testing.T) {
+	dir := t.TempDir()
+	addr := startSedimentd(t, server.Options{BackupDir: dir})
+	ctx := context.Background()
+	rdb := redis.NewClient(&redis.Options{Addr: addr})
+	defer rdb.Close()
+	if err := rdb.Set(ctx, "k", "v", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := rdb.BgSave(ctx).Result(); err != nil || got != "Background saving started" {
+		t.Fatalf("BGSAVE: %q, %v", got, err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		last, err := rdb.LastSave(ctx).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if last > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("LASTSAVE did not move")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("backup directory: %v, %v", entries, err)
+	}
 }

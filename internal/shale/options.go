@@ -60,6 +60,11 @@ type Options struct {
 	// it.
 	getHook func(stage string)
 
+	// checkpointHook is called by Checkpoint at the stages "linked" and "manifest".
+	// If it returns an error, the checkpoint fails. Only the tests of the package
+	// set it.
+	checkpointHook func(stage string) error
+
 	// iterHook is called when a snapshot or an iterator holds the state and has
 	// not read the sequence number yet. Only the tests of the package set it.
 	iterHook func(stage string)

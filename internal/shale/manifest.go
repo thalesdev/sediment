@@ -57,20 +57,32 @@ func readManifest(dir string) (version manifest.Version, dropped int, err error)
 	return version, r.Dropped(), nil
 }
 
-// writeManifest writes version as one edit to a new MANIFEST. It writes a
-// temporary file, flushes it, renames it over the MANIFEST and flushes the
-// directory. The rename is the commit. The DB keeps the file and the writer, so
-// that later edits go on in the same log, with the blocks in line.
+// writeManifest writes version as one edit to a new MANIFEST in the directory of
+// the DB. The DB keeps the file and the writer, so that later edits go on in the
+// same log, with the blocks in line.
 func (db *DB) writeManifest(version manifest.Version) error {
-	tmp := filepath.Join(db.dir, manifestTmpName)
+	f, w, err := writeManifestTo(db.dir, version)
+	if err != nil {
+		return err
+	}
+	db.manifest, db.manifestLog = f, w
+	return nil
+}
+
+// writeManifestTo writes version as one edit to a new MANIFEST in dir. It writes
+// a temporary file, flushes it, renames it over the MANIFEST and flushes the
+// directory. The rename is the commit. It returns the file and the writer, which
+// the caller keeps to add edits, or closes.
+func writeManifestTo(dir string, version manifest.Version) (*os.File, *wal.Writer, error) {
+	tmp := filepath.Join(dir, manifestTmpName)
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		return fmt.Errorf("shale: creating the MANIFEST: %w", err)
+		return nil, nil, fmt.Errorf("shale: creating the MANIFEST: %w", err)
 	}
-	fail := func(err error) error {
+	fail := func(err error) (*os.File, *wal.Writer, error) {
 		f.Close()
 		os.Remove(tmp)
-		return fmt.Errorf("shale: writing the MANIFEST: %w", err)
+		return nil, nil, fmt.Errorf("shale: writing the MANIFEST: %w", err)
 	}
 	w := wal.NewWriter(syncFile{f})
 	if err := w.AddRecord(version.Compact().Encode(nil)); err != nil {
@@ -79,15 +91,14 @@ func (db *DB) writeManifest(version manifest.Version) error {
 	if err := w.Sync(); err != nil {
 		return fail(err)
 	}
-	if err := os.Rename(tmp, filepath.Join(db.dir, manifestName)); err != nil {
+	if err := os.Rename(tmp, filepath.Join(dir, manifestName)); err != nil {
 		return fail(err)
 	}
-	if err := syncDir(db.dir); err != nil {
+	if err := syncDir(dir); err != nil {
 		f.Close()
-		return fmt.Errorf("shale: syncing the directory: %w", err)
+		return nil, nil, fmt.Errorf("shale: syncing the directory: %w", err)
 	}
-	db.manifest, db.manifestLog = f, w
-	return nil
+	return f, w, nil
 }
 
 // appendEdit adds edit to the MANIFEST and flushes it. The edit is a commit when
