@@ -22,6 +22,12 @@ func aclServer(t *testing.T) (*Server, string, string) {
 		"user admin on " + admin + " ~* +@all\n" +
 		"user app on nopass ~app:* +@read +@write +@connection +@transaction -@dangerous\n" +
 		"user ro on nopass %R~pub:* +@read +@connection\n"
+	addr, path := aclServerWith(t, text)
+	return nil, addr, path
+}
+
+func aclServerWith(t *testing.T, text string) (string, string) {
+	t.Helper()
 	_, path := aclFile(t, text)
 	known := command.NewRegistry()
 	reg, _, err := acl.Load(path, acl.ParseOptions{
@@ -34,8 +40,8 @@ func aclServer(t *testing.T) (*Server, string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, addr := startServer(t, Options{Access: reg, AuthFailLimit: -1})
-	return s, addr, path
+	_, addr := startServer(t, Options{Access: reg, AuthFailLimit: -1})
+	return addr, path
 }
 
 func as(t *testing.T, addr, user, pass string) *client {

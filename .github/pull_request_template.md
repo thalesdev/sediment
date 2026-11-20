@@ -16,7 +16,7 @@ What does this change, and why?
 ## AI disclosure
 
 - [ ] No AI tool wrote or changed a significant part of this pull request
-- [ ] An AI tool did, and I say which tool and what it did here, and the commits have a `Co-Authored-By` line:
+- [ ] An AI tool did, and I say which tool and what it did here:
 
 ## Notes
 

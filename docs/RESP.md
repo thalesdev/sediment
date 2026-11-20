@@ -49,8 +49,19 @@ closes the connection, so that a web page cannot talk to the server.
 | Command | State | Notes |
 |---|---|---|
 | `GET` | [x] | |
-| `SET` | [x] | `NX`, `XX`, `GET`, `EX`, `PX`, `EXAT`, `PXAT` and `KEEPTTL`. A plain `SET` removes the TTL. |
+| `SET` | [x] | `NX`, `XX`, `IFEQ`, `IFNE`, `IFDEQ`, `IFDNE`, `GET`, `EX`, `PX`, `EXAT`, `PXAT` and `KEEPTTL`. A plain `SET` removes the TTL. |
 | `DEL` | [x] | Many keys are one atomic write. |
+| `DIGEST` | [x] | The XXH3 64-bit hash of a string as 16 hex digits, as Redis 8.4. |
+| `DELEX` | [x] | `DEL` with `IFEQ`, `IFNE`, `IFDEQ` and `IFDNE`. Replies 1 or 0. |
+| `MSETEX` | [x] | Many keys with one expiry in one write, with `NX`, `XX` or `KEEPTTL`. Replies 1 or 0. |
+| `SETBIT`, `GETBIT` | [x] | Offsets up to 2^32 - 1, within the limit of the size of a string. |
+| `LCS` | [x] | `LEN`, `IDX`, `MINMATCHLEN` and `WITHMATCHLEN`. A table of more than 16 million cells is refused. |
+| `SUBSTR` | [x] | The same as `GETRANGE`. |
+| `COPY` | [x] | Any type, with its expiry. `REPLACE`. `DB` accepts only 0. A collection of up to a million elements. |
+| `TOUCH`, `TIME` | [x] | `TOUCH` counts the keys that exist. |
+| `RESET` | [x] | Drops the transaction, the watched keys, the name and the protocol, and signs the client out. |
+| `OBJECT` | [x] | `ENCODING`, `REFCOUNT` and `HELP`. `FREQ` and `IDLETIME` answer an error, because the server does not track them. |
+| `FLUSHALL`, `FLUSHDB` | [x] | The same command, because there is only database 0. `ASYNC` and `SYNC` are accepted and do nothing. It is one atomic write with a range delete for each class of key, and it keeps the format record. It takes every lock, makes every `WATCH` fail, and needs `@dangerous` and the right to write every key (`~*`). It is refused inside `MULTI`. |
 | `EXISTS` | [x] | |
 | `MGET` | [x] | The reply has a size limit. |
 | `MSET` | [x] | One atomic write. |
@@ -61,7 +72,7 @@ closes the connection, so that a web page cannot talk to the server.
 | `CLIENT` | [x] | `ID`, `SETNAME`, `GETNAME`, `SETINFO`, `INFO`, `LIST` (with `ID` and `TYPE normal`) and `KILL` (the old form with an address, and `ID`, `ADDR`, `LADDR`, `USER`, `SKIPME`). `LIST` and `KILL` need `@admin` and `@dangerous`. |
 | `CLIENT PAUSE`, `TRACKING` | [ ] | |
 | `SLOWLOG` | [x] | `GET [count]`, `LEN`, `RESET`. An entry has the name of the command and the number of its arguments, never an argument. See `slowlog-log-slower-than` and `slowlog-max-len`. |
-| `COMMAND` | [x] | `COUNT`, `LIST`, `INFO`, `DOCS` (empty). |
+| `COMMAND` | [x] | `COUNT`, `LIST`, `INFO`, `DOCS` (empty), `GETKEYS` and `GETKEYSANDFLAGS`. |
 | `INFO` | [x] | Sections `server` (with `loading` and `storage`), `clients`, `stats`, `cpu`, `persistence`, `shale`, `runtime`. While the node opens its data, `INFO` shows `loading:1` and every other command gets a `LOADING` error. |
 | `CONFIG GET` | [x] | Read only, no file names. |
 | `CONFIG SET`, `REWRITE` | [ ] | On purpose. See [SECURITY.md](../SECURITY.md). |
@@ -87,6 +98,8 @@ closes the connection, so that a web page cannot talk to the server.
 | `HGETALL`, `HKEYS`, `HVALS` | [x] | One snapshot. The reply is a map in RESP3, and it has a size limit. The fields come in byte order. |
 | `HSCAN` | [x] | `MATCH` and `COUNT`. A scan ends if the hash is deleted and made again. |
 | `SADD`, `SREM`, `SPOP`, `SISMEMBER`, `SMISMEMBER`, `SCARD`, `SMEMBERS`, `SRANDMEMBER`, `SSCAN` | [x] | A set with no member goes away. `SMEMBERS` is a set in RESP3. `SPOP` and `SRANDMEMBER` read the set in one pass, and `SRANDMEMBER` with a negative count reads sets of up to 100000 members. |
+| `SMOVE` | [x] | One atomic write. A source that becomes empty goes away. |
+| `SINTERCARD`, `SUNIONCARD`, `SDIFFCARD` | [x] | `LIMIT` stops the count. `APPROX` of `SUNIONCARD` is accepted and does nothing. |
 | `SUNION`, `SINTER`, `SDIFF`, `SUNIONSTORE`, `SINTERSTORE`, `SDIFFSTORE` | [x] | All the sets are read as of one snapshot. The `STORE` versions replace the destination in one write. |
 | Lists, sorted sets, streams | [ ] | After v1.0. |
 | `EVAL`, `FUNCTION`, `MODULE`, `DEBUG`, `REPLICAOF`, `SLAVEOF` | never | The source of most Redis CVEs. |
