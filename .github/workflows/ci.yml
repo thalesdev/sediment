@@ -100,7 +100,7 @@ jobs:
             compat/go.sum
             cmd/sedimentd/go.sum
       - run: go test -short -covermode=atomic -coverprofile=coverage.out ./...
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         with:
           files: coverage.out
           fail_ci_if_error: false
