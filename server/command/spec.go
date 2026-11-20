@@ -365,7 +365,7 @@ func (r *Registry) Specs() []*Spec {
 // NewRegistry returns a registry with all the commands of the server.
 func NewRegistry() *Registry {
 	r := &Registry{specs: make(map[string]*Spec)}
-	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), moreStringCommands(), extraStringCommands(), txCommands(), persistenceCommands(), flushCommands(), connectionCommands(), operatorCommands(), metaCommands()} {
+	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), moreStringCommands(), extraStringCommands(), extraKeyCommands(), txCommands(), persistenceCommands(), flushCommands(), connectionCommands(), operatorCommands(), metaCommands()} {
 		for _, s := range list {
 			r.specs[s.Name] = s
 		}
