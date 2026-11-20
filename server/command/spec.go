@@ -41,6 +41,11 @@ type Spec struct {
 	// argument names one. An ACL rule can allow or deny a single subcommand.
 	Subs []string
 
+	// KeyFunc finds the keys of a command whose number is an argument, as in
+	// SINTERCARD numkeys key [key ...], where FirstKey, LastKey and KeyStep cannot say.
+	// It returns nil if the arguments have no valid count. If it is set, KeysOf uses it.
+	KeyFunc func(args [][]byte) [][]byte
+
 	// WritesAllKeys is true for a command that changes every key without naming
 	// them, such as FLUSHALL. A user can run it only if it can write every key.
 	WritesAllKeys bool

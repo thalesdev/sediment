@@ -39,7 +39,7 @@ func extraStringCommands() []*Spec {
 	return []*Spec{
 		{Name: "digest", Arity: 2, Categories: acl.CatRead | str | acl.CatSlow, FirstKey: 1, LastKey: 1, KeyStep: 1, Handler: digest},
 		{Name: "delex", Arity: -2, Categories: acl.CatWrite | str | acl.CatSlow, FirstKey: 1, LastKey: 1, KeyStep: 1, Handler: delex},
-		{Name: "msetex", Arity: -4, Categories: acl.CatWrite | str | acl.CatSlow, FirstKey: 2, LastKey: 2, KeyStep: 1, Handler: msetex},
+		{Name: "msetex", Arity: -4, Categories: acl.CatWrite | str | acl.CatSlow, KeyFunc: msetexKeys, Handler: msetex},
 		{Name: "setbit", Arity: 4, Categories: acl.CatWrite | str | acl.CatSlow, FirstKey: 1, LastKey: 1, KeyStep: 1, Handler: setbit},
 		{Name: "getbit", Arity: 3, Categories: acl.CatRead | str | acl.CatFast, FirstKey: 1, LastKey: 1, KeyStep: 1, Handler: getbit},
 		{Name: "lcs", Arity: -3, Categories: acl.CatRead | str | acl.CatSlow, FirstKey: 1, LastKey: 2, KeyStep: 1, Handler: lcs},
