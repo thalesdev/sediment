@@ -76,6 +76,10 @@ func (s *Server) newConn(nc net.Conn) *conn {
 // serve runs the connection until it ends. A panic ends only this connection.
 func (c *conn) serve() {
 	defer func() { _ = c.nc.Close() }()
+	c.s.opts.Log.Debug("connection opened", "client", c.client.ID, "addr", c.client.Addr)
+	defer func() {
+		c.s.opts.Log.Debug("connection closed", "client", c.client.ID, "addr", c.client.Addr, "user", printable([]byte(c.client.User), 64))
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			c.s.opts.Log.Error("connection panic", "client", c.client.ID, "panic", r, "stack", string(debug.Stack()))

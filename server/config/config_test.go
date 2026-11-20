@@ -26,6 +26,19 @@ func TestParse(t *testing.T) {
 		}
 	})
 
+	t.Run("Should read the log format and refuse a format that is not text or json", func(t *testing.T) {
+		c, err := parse(t, "log-format json\n")
+		if err != nil || c.LogFormat != "json" {
+			t.Fatalf("got %+v, %v", c, err)
+		}
+		if c, _ = parse(t, ""); c.LogFormat != "text" {
+			t.Fatalf("the default format is %q", c.LogFormat)
+		}
+		if _, err := parse(t, "log-format xml\n"); err == nil {
+			t.Fatal("xml was accepted")
+		}
+	})
+
 	t.Run("Should refuse unknown keys and bad values", func(t *testing.T) {
 		for _, text := range []string{
 			"tls-cert-fil /x\n", "port 0\n", "port 70000\n", "port abc\n", "sync maybe\n", "timeout -1\n", "read-timeout 0\n",

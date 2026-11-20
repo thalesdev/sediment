@@ -91,12 +91,15 @@ type Config struct {
 
 	// LogLevel is debug, info, warn or error. The default is info.
 	LogLevel string
+
+	// LogFormat is text or json. The default is text.
+	LogFormat string
 }
 
 // Defaults returns the default settings: loopback only, port 6379, no TLS, no
 // users.
 func Defaults() Config {
-	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", MemtableSize: 64 << 20, BlockCacheSize: 64 << 20, LogLevel: "info"}
+	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", MemtableSize: 64 << 20, BlockCacheSize: 64 << 20, LogLevel: "info", LogFormat: "text"}
 }
 
 // Parse reads a file of "key value" lines into c. A line that is empty or that
@@ -177,6 +180,13 @@ func (c *Config) Set(key string, v []string) error {
 			c.LogLevel = val
 		default:
 			return errors.New("loglevel must be debug, info, warn or error")
+		}
+	case "log-format":
+		switch val {
+		case "text", "json":
+			c.LogFormat = val
+		default:
+			return errors.New("log-format must be text or json")
 		}
 	default:
 		return fmt.Errorf("unknown setting %q", printable(key))
@@ -306,6 +316,7 @@ func (c Config) Settings() map[string]string {
 		"acl":           yes(c.ACLFile != ""),
 		"max-args":      strconv.Itoa(c.MaxArgs),
 		"loglevel":      c.LogLevel,
+		"log-format":    c.LogFormat,
 		"insecure-bind": yes(c.InsecureBind),
 	}
 }

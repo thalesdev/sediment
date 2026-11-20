@@ -72,6 +72,9 @@ func signIn(env *Env, c *Client, user string, password []byte) (resp.Value, bool
 		return resp.Value{}, true
 	}
 	c.AuthFailures++
+	if env.Log != nil {
+		env.Log.Warn("sign in failed", "user", printable([]byte(user), 64), "addr", c.Addr, "failures", c.AuthFailures)
+	}
 	delay := env.AuthDelay
 	for i := 1; i < c.AuthFailures && delay < env.AuthDelayMax; i++ {
 		delay *= 2

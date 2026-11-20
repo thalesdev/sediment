@@ -4,7 +4,9 @@ package shale
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -111,6 +113,7 @@ type table struct {
 	refs     atomic.Int64
 	obsolete atomic.Bool
 	cache    *sstable.BlockCache
+	lg       *slog.Logger
 
 	tombs   []rangeTomb
 	tombIdx *tombIndex
@@ -125,7 +128,9 @@ func (t *table) unref() {
 	}
 	t.file.Close()
 	if t.obsolete.Load() {
-		os.Remove(t.path)
+		if err := os.Remove(t.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.lg.Warn("an obsolete table file was not removed, the next Open removes it", "table", t.meta.Number, "err", err)
+		}
 		t.cache.DropTable(t.meta.Number)
 	}
 }
@@ -189,7 +194,7 @@ func readerOptions(cache *sstable.BlockCache, number uint64) sstable.Options {
 
 // openTable opens the table file of meta in dir. It returns an error if the size
 // of the file is not the size of the MANIFEST or if the table does not open.
-func openTable(dir string, meta manifest.TableMeta, cache *sstable.BlockCache) (*table, error) {
+func openTable(dir string, meta manifest.TableMeta, cache *sstable.BlockCache, lg *slog.Logger) (*table, error) {
 	name := tableName(meta.Number)
 	f, err := os.Open(filepath.Join(dir, name))
 	if err != nil {
@@ -214,7 +219,7 @@ func openTable(dir string, meta manifest.TableMeta, cache *sstable.BlockCache) (
 		f.Close()
 		return nil, fmt.Errorf("shale: table %s: %w", name, err)
 	}
-	return &table{meta: meta, path: filepath.Join(dir, name), file: f, reader: reader, cache: cache, tombs: tombs, tombIdx: newTombIndex(tombs)}, nil
+	return &table{meta: meta, path: filepath.Join(dir, name), file: f, reader: reader, cache: cache, lg: lg, tombs: tombs, tombIdx: newTombIndex(tombs)}, nil
 }
 
 // lookupMemtable finds the newest version of user that the lookup key sees in m.

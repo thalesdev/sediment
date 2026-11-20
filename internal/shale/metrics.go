@@ -3,6 +3,7 @@
 package shale
 
 import (
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,11 +38,15 @@ type stallStat struct {
 
 // wait waits on cond, which uses the lock of the caller, and adds the wait to s. The
 // caller must hold the lock of cond.
-func (s *stallStat) wait(cond *sync.Cond) {
+func (s *stallStat) wait(cond *sync.Cond, lg *slog.Logger, reason string) {
 	began := time.Now()
 	cond.Wait()
+	took := time.Since(began)
 	s.count.Add(1)
-	s.nanos.Add(int64(time.Since(began)))
+	s.nanos.Add(int64(took))
+	if took >= stallLogThreshold {
+		lg.Warn("write waited", "reason", reason, "ms", took.Milliseconds())
+	}
 }
 
 // Metrics is a count of the work of a DB.

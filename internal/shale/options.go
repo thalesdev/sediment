@@ -2,6 +2,26 @@
 
 package shale
 
+import (
+	"io"
+	"log/slog"
+	"time"
+)
+
+// discardLogger is the logger of a DB that has no Options.Logger.
+var discardLogger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.Level(100)}))
+
+// logger returns Options.Logger, or a logger that drops every record.
+func (o Options) logger() *slog.Logger {
+	if o.Logger == nil {
+		return discardLogger
+	}
+	return o.Logger
+}
+
+// stallLogThreshold is the shortest wait of a write that the DB logs.
+const stallLogThreshold = 100 * time.Millisecond
+
 // defaultMemtableSize is the memtable size when Options.MemtableSize is 0.
 const defaultMemtableSize = 4 << 20
 
@@ -44,6 +64,12 @@ type Options struct {
 	// only change from false to true as time goes by, and it must not keep the
 	// slices that it gets.
 	CompactionFilter func(key, value []byte) bool
+
+	// Logger receives the events of the background work: each flush and compaction,
+	// the writes that wait for them, what the recovery replayed or cut, a file that
+	// could not be removed, and the failure that stops the DB. It never gets a key or
+	// a value. The default is nil, which logs nothing.
+	Logger *slog.Logger
 
 	// flushHook is called by the flush at the stages "table", "commit" and
 	// "cleanup". If it returns an error, the flush fails. Only the tests of the

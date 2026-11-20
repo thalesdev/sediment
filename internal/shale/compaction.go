@@ -166,8 +166,16 @@ func (db *DB) compactLoop() {
 		db.compacting.Store(true)
 		db.mu.Unlock()
 		began := time.Now()
+		db.lg.Debug("compaction started", "tables", len(inputs), "oldest", chosen.includesOldest)
 		output, err := db.compact(inputs, chosen.includesOldest)
 		db.compactNanos.Add(int64(time.Since(began)))
+		if err == nil {
+			var written uint64
+			if output != nil {
+				written = output.meta.Size
+			}
+			db.lg.Info("compaction finished", "tables", len(inputs), "bytes_written", written, "ms", time.Since(began).Milliseconds())
+		}
 		db.mu.Lock()
 		if err != nil {
 			db.compacting.Store(false)
@@ -240,7 +248,7 @@ func (db *DB) compact(inputs []*table, includesOldest bool) (*table, error) {
 		edit.Delete = append(edit.Delete, manifest.TableRef{Level: 0, Number: t.meta.Number})
 	}
 	if meta != nil {
-		if output, err = openTable(db.dir, *meta, db.cache); err != nil {
+		if output, err = openTable(db.dir, *meta, db.cache, db.lg); err != nil {
 			return nil, err
 		}
 		edit.Add = []manifest.TableMeta{*meta}
@@ -280,7 +288,7 @@ func (db *DB) writeCompacted(number uint64, it *dropIter, tombs []rangeTomb, sma
 	}
 	fail := func(err error) (*manifest.TableMeta, error) {
 		f.Close()
-		os.Remove(path)
+		db.removeQuiet(path)
 		return nil, fmt.Errorf("shale: writing table %s: %w", tableName(number), err)
 	}
 	w := sstable.NewWriter(syncFile{f}, tableOptions())

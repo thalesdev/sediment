@@ -5,6 +5,7 @@ package shale
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ import (
 type DB struct {
 	dir   string
 	opts  Options
+	lg    *slog.Logger
 	lock  *os.File
 	cache *sstable.BlockCache
 
@@ -314,6 +316,7 @@ func (db *DB) Close() error {
 func (db *DB) fail(part string, err error) error {
 	if db.err == nil {
 		db.err = fmt.Errorf("shale: %s failed: %w", part, err)
+		db.lg.Error("the DB failed and refuses writes", "part", part, "err", err)
 	}
 	db.cond.Broadcast()
 	return db.err

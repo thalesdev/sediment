@@ -34,11 +34,11 @@ func (db *DB) makeRoom() error {
 			return nil
 		}
 		if state.imm != nil {
-			db.stallFlush.wait(db.cond)
+			db.stallFlush.wait(db.cond, db.lg, "flush")
 			continue
 		}
 		if !db.opts.disableCompaction && len(state.tables) >= stallTables {
-			db.stallCompaction.wait(db.cond)
+			db.stallCompaction.wait(db.cond, db.lg, "compaction")
 			continue
 		}
 		began := time.Now()
@@ -62,7 +62,7 @@ func (db *DB) freeze(state *readState) error {
 	}
 	abandon := func(err error) error {
 		f.Close()
-		os.Remove(path)
+		db.removeQuiet(path)
 		return err
 	}
 	if err := syncDir(db.dir); err != nil {
@@ -109,9 +109,13 @@ func (db *DB) flushLoop() {
 		frozen, activeLog := state.imm, state.mem.wal
 		db.mu.Unlock()
 		began := time.Now()
+		db.lg.Debug("flush started", "log", frozen.wal)
 		tbl, err := db.flush(frozen, activeLog)
 		db.flushes.Add(1)
 		db.flushNanos.Add(int64(time.Since(began)))
+		if err == nil {
+			db.lg.Info("flush finished", "table", tbl.meta.Number, "bytes", tbl.meta.Size, "ms", time.Since(began).Milliseconds())
+		}
 		db.mu.Lock()
 		if err != nil {
 			db.fail("flush", err)
@@ -142,7 +146,7 @@ func (db *DB) flush(frozen *memtable, activeLog uint64) (*table, error) {
 	if err := db.hook("table"); err != nil {
 		return nil, err
 	}
-	tbl, err := openTable(db.dir, meta, db.cache)
+	tbl, err := openTable(db.dir, meta, db.cache, db.lg)
 	if err != nil {
 		return nil, err
 	}

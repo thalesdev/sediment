@@ -13,7 +13,7 @@
 // The server listens on 127.0.0.1 only, with no TLS and no users, unless the
 // settings say otherwise. It refuses to listen on an address that other machines
 // reach unless it has TLS or a sign in. SIGINT and SIGTERM stop it after the
-// running commands finish. SIGHUP reads the TLS certificate again.
+// running commands finish. SIGHUP reads the TLS certificate and the log level again.
 package main
 
 import (
@@ -57,8 +57,9 @@ func main() {
 	}
 }
 
-// loadConfig reads the flags and the config file. A flag wins over the file.
-func loadConfig(args []string, stderr io.Writer) (cfg config.Config, showVersion bool, err error) {
+// loadConfig reads the flags and the config file. A flag wins over the file. It
+// returns the path of the file, which is empty if there is none.
+func loadConfig(args []string, stderr io.Writer) (cfg config.Config, path string, showVersion bool, err error) {
 	fs := flag.NewFlagSet("sedimentd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	file := fs.String("config", "", "file of settings, one 'key value' per line")
@@ -68,17 +69,17 @@ func loadConfig(args []string, stderr io.Writer) (cfg config.Config, showVersion
 	aclfile := fs.String("aclfile", "", "file of users")
 	ver := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
-		return cfg, false, err
+		return cfg, "", false, err
 	}
 	cfg = config.Defaults()
 	if *file != "" {
 		f, err := os.Open(*file)
 		if err != nil {
-			return cfg, false, err
+			return cfg, "", false, err
 		}
 		defer f.Close()
 		if err := config.Parse(f, &cfg); err != nil {
-			return cfg, false, fmt.Errorf("%s: %w", *file, err)
+			return cfg, "", false, fmt.Errorf("%s: %w", *file, err)
 		}
 	}
 	var setErr error
@@ -99,9 +100,9 @@ func loadConfig(args []string, stderr io.Writer) (cfg config.Config, showVersion
 		}
 	})
 	if setErr != nil {
-		return cfg, false, setErr
+		return cfg, "", false, setErr
 	}
-	return cfg, *ver, cfg.Validate()
+	return cfg, *file, *ver, cfg.Validate()
 }
 
 // certHolder keeps the certificate of the server, so that a SIGHUP can replace it
@@ -147,11 +148,40 @@ func (h *certHolder) tlsConfig() (*tls.Config, error) {
 	return cfg, nil
 }
 
-// newLogger returns the logger of the server, with the level of the config.
-func newLogger(w io.Writer, level string) *slog.Logger {
+// parseLevel returns the slog level of a level name of the config.
+func parseLevel(name string) slog.Level {
 	var l slog.Level
-	_ = l.UnmarshalText([]byte(level))
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: l}))
+	_ = l.UnmarshalText([]byte(name))
+	return l
+}
+
+// newLogger returns the logger of the server, in the format of the config. The
+// level is a LevelVar, so that a SIGHUP can change it while the server runs.
+func newLogger(w io.Writer, level *slog.LevelVar, format string) *slog.Logger {
+	opts := &slog.HandlerOptions{Level: level}
+	if format == "json" {
+		return slog.New(slog.NewJSONHandler(w, opts))
+	}
+	return slog.New(slog.NewTextHandler(w, opts))
+}
+
+// reloadLevel reads the config file again and sets level to its loglevel. A
+// file that does not parse leaves the level as it is.
+func reloadLevel(path string, level *slog.LevelVar) error {
+	if path == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	cfg := config.Defaults()
+	if err := config.Parse(f, &cfg); err != nil {
+		return err
+	}
+	level.Set(parseLevel(cfg.LogLevel))
+	return nil
 }
 
 // maxPassword is the longest password that hash-password reads, in bytes.
@@ -183,7 +213,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 1 && args[0] == "hash-password" {
 		return hashPassword(stdin, stdout)
 	}
-	cfg, showVersion, err := loadConfig(args, stderr)
+	cfg, cfgPath, showVersion, err := loadConfig(args, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -194,7 +224,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "sedimentd", version)
 		return nil
 	}
-	log := newLogger(stderr, cfg.LogLevel)
+	level := new(slog.LevelVar)
+	level.Set(parseLevel(cfg.LogLevel))
+	log := newLogger(stderr, level, cfg.LogFormat)
 
 	var access command.Access
 	if cfg.ACLFile != "" {
@@ -216,29 +248,37 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	var tlsCfg *tls.Config
+	var holder *certHolder
 	if cfg.TLSEnabled() {
-		holder := &certHolder{cfg: cfg}
+		holder = &certHolder{cfg: cfg}
 		if tlsCfg, err = holder.tlsConfig(); err != nil {
 			return fmt.Errorf("tls: %w", err)
 		}
-		hup := make(chan os.Signal, 1)
-		signal.Notify(hup, syscall.SIGHUP)
-		defer signal.Stop(hup)
-		go func() {
-			for range hup {
+	}
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	go func() {
+		for range hup {
+			if holder != nil {
 				if err := holder.load(); err != nil {
 					log.Error("tls certificate not reloaded, the old one stays", "err", err)
 				} else {
 					log.Info("tls certificate reloaded")
 				}
 			}
-		}()
-	}
+			if err := reloadLevel(cfgPath, level); err != nil {
+				log.Error("log level not reloaded, the old one stays", "err", err)
+			} else if cfgPath != "" {
+				log.Info("log level reloaded", "level", level.Level().String())
+			}
+		}
+	}()
 
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return err
 	}
-	db, err := shale.Open(cfg.Dir, shale.Options{Sync: cfg.Sync, MemtableSize: cfg.MemtableSize, BlockCacheSize: cfg.BlockCacheSize, CompactionFilter: command.ExpiredFilter(nil)})
+	db, err := shale.Open(cfg.Dir, shale.Options{Sync: cfg.Sync, MemtableSize: cfg.MemtableSize, BlockCacheSize: cfg.BlockCacheSize, CompactionFilter: command.ExpiredFilter(nil), Logger: log})
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
