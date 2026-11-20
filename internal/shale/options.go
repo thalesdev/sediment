@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // discardLogger is the logger of a DB that has no Options.Logger.
@@ -70,6 +72,11 @@ type Options struct {
 	// could not be removed, and the failure that stops the DB. It never gets a key or
 	// a value. The default is nil, which logs nothing.
 	Logger *slog.Logger
+
+	// Tracer makes a span for each flush and each compaction, with the number of the
+	// table, its size and the time. It never gets a key or a value. The default is
+	// nil, which makes no span. Only the OpenTelemetry API is imported here.
+	Tracer trace.Tracer
 
 	// flushHook is called by the flush at the stages "table", "commit" and
 	// "cleanup". If it returns an error, the flush fails. Only the tests of the

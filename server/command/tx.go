@@ -260,6 +260,11 @@ func (e *Env) changed(w watchEntry) bool {
 	return w.live && w.deadline != 0 && w.deadline <= e.nowMillis()
 }
 
+// ReplySize returns the number of bytes of text in a reply.
+func ReplySize(v resp.Value) int {
+	return replyBytes(v)
+}
+
 // replyBytes returns the number of bytes of text in a reply.
 func replyBytes(v resp.Value) int {
 	n := len(v.Bytes)

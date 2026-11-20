@@ -46,6 +46,7 @@ func Open(dir string, opts Options) (*DB, error) {
 		dir:         dir,
 		opts:        opts,
 		lg:          opts.logger(),
+		tr:          opts.Tracer,
 		lock:        lock,
 		cache:       sstable.NewBlockCache(opts.blockCacheSize()),
 		flushDone:   make(chan struct{}),

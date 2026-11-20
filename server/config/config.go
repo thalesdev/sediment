@@ -123,6 +123,16 @@ type Config struct {
 	// variables. The default is false.
 	OTLPMetrics bool
 
+	// OTLPTraces sends the spans with OTLP over HTTP. The endpoint, the headers and
+	// the TLS settings are the standard OTEL_EXPORTER_OTLP environment variables.
+	// The default is false.
+	OTLPTraces bool
+
+	// TraceSampleRate is the part of the commands that get a span, from 0 to 1. The
+	// spans of the flush and of the compaction are rare, and always made. The
+	// default is 0.01.
+	TraceSampleRate float64
+
 	// OTLPInterval is the time between two exports of the metrics. The default is
 	// 60 seconds.
 	OTLPInterval time.Duration
@@ -141,7 +151,7 @@ type Config struct {
 // Defaults returns the default settings: loopback only, port 6379, no TLS, no
 // users.
 func Defaults() Config {
-	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", MemtableSize: 64 << 20, BlockCacheSize: 64 << 20, LogLevel: "info", LogFormat: "text", OTLPInterval: time.Minute, SlowLogSlowerThan: 10000, SlowLogMaxLen: 128, AuthFailLimit: 20, AuthFailWindow: time.Minute}
+	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", MemtableSize: 64 << 20, BlockCacheSize: 64 << 20, LogLevel: "info", LogFormat: "text", OTLPInterval: time.Minute, TraceSampleRate: 0.01, SlowLogSlowerThan: 10000, SlowLogMaxLen: 128, AuthFailLimit: 20, AuthFailWindow: time.Minute}
 }
 
 // Parse reads a file of "key value" lines into c. A line that is empty or that
@@ -241,6 +251,14 @@ func (c *Config) Set(key string, v []string) error {
 		c.MetricsPasswordHash = val
 	case "otlp-metrics":
 		return setBool(&c.OTLPMetrics, key, val)
+	case "otlp-traces":
+		return setBool(&c.OTLPTraces, key, val)
+	case "trace-sample-rate":
+		f, err := strconv.ParseFloat(val, 64)
+		if err != nil || f < 0 || f > 1 || f != f {
+			return errors.New("trace-sample-rate must be a number from 0 to 1")
+		}
+		c.TraceSampleRate = f
 	case "otlp-interval":
 		return setSeconds(&c.OTLPInterval, key, val, false)
 	case "insecure-bind":

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/thalesdev/sediment/resp"
 	"github.com/thalesdev/sediment/server/command"
@@ -103,6 +104,17 @@ type Options struct {
 	// server keeps no metric and pays nothing. Only the OpenTelemetry API is
 	// imported here, so the caller links the SDK that it wants.
 	Meter metric.Meter
+
+	// Tracer makes a span for a command that the sample picks: its name, the number
+	// of its keys (never a key), its result and the size of its reply. It can be nil,
+	// and then the server makes no span and pays nothing. Only the OpenTelemetry API
+	// is imported here.
+	Tracer trace.Tracer
+
+	// TraceSampleRate is the part of the commands that get a span, from 0 to 1. The
+	// server picks them itself, before it asks the tracer for a span, so a command
+	// that is not picked costs one random number. The default is 0.
+	TraceSampleRate float64
 
 	// CertUser makes a client that presents a certificate sign in as the user that
 	// is named like the common name of the certificate, if that user has the rule

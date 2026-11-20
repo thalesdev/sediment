@@ -60,8 +60,12 @@ func (c *conn) batchSets(first [][]byte) (carry [][]byte, readErr error, written
 	}
 	start := time.Now()
 	c.client.Touch(&c.s.set.Name, start)
+	span := c.s.startBatchSpan(c.s.set, len(cmds))
 	replies := command.SetMany(c.s.env, cmds)
-	c.s.observe(c.client, c.s.set, len(cmds), 2*len(cmds), resp.KindSimple, start)
+	c.s.observe(c.client, c.s.set, len(cmds), 2*len(cmds), resp.KindSimple, start, traceID(span))
+	if span != nil {
+		endSpan(span, resp.Value{Kind: resp.KindSimple, Bytes: []byte("OK")})
+	}
 	c.s.totalCommands.Add(uint64(len(cmds)))
 	c.s.setBatches.Add(1)
 	c.s.setBatched.Add(uint64(len(cmds)))

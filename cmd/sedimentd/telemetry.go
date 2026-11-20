@@ -17,10 +17,13 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/thalesdev/sediment/server/acl"
 	"github.com/thalesdev/sediment/server/config"
@@ -30,6 +33,7 @@ import (
 // with, and the HTTP handler of the Prometheus endpoint, if there is one.
 type telemetry struct {
 	meter    metric.Meter
+	tracer   trace.Tracer
 	handler  http.Handler
 	shutdown func(context.Context) error
 }
@@ -47,7 +51,7 @@ func newResource(version string) (*resource.Resource, error) {
 // and then the server records nothing and pays nothing. The metrics of the Go
 // runtime go with the others.
 func setupTelemetry(ctx context.Context, cfg config.Config, version string) (*telemetry, error) {
-	if cfg.MetricsAddr == "" && !cfg.OTLPMetrics {
+	if cfg.MetricsAddr == "" && !cfg.OTLPMetrics && !cfg.OTLPTraces {
 		return nil, nil
 	}
 	res, err := newResource(version)
@@ -56,6 +60,20 @@ func setupTelemetry(ctx context.Context, cfg config.Config, version string) (*te
 	}
 	opts := []sdkmetric.Option{sdkmetric.WithResource(res)}
 	t := &telemetry{}
+	var stops []func(context.Context) error
+	if cfg.OTLPTraces {
+		exp, err := otlptracehttp.New(ctx)
+		if err != nil {
+			return nil, err
+		}
+		tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exp), sdktrace.WithResource(res), sdktrace.WithSampler(sdktrace.AlwaysSample()))
+		t.tracer = tp.Tracer("github.com/thalesdev/sediment")
+		stops = append(stops, tp.Shutdown)
+	}
+	if cfg.MetricsAddr == "" && !cfg.OTLPMetrics {
+		t.shutdown = joinShutdown(stops)
+		return t, nil
+	}
 	if cfg.MetricsAddr != "" {
 		registry := prometheus.NewRegistry()
 		exp, err := otelprom.New(otelprom.WithRegisterer(registry))
@@ -77,8 +95,20 @@ func setupTelemetry(ctx context.Context, cfg config.Config, version string) (*te
 		return nil, err
 	}
 	t.meter = provider.Meter("github.com/thalesdev/sediment")
-	t.shutdown = provider.Shutdown
+	t.shutdown = joinShutdown(append(stops, provider.Shutdown))
 	return t, nil
+}
+
+// joinShutdown returns a function that runs every stop and returns their errors
+// joined.
+func joinShutdown(stops []func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		var errs []error
+		for _, stop := range stops {
+			errs = append(errs, stop(ctx))
+		}
+		return errors.Join(errs...)
+	}
 }
 
 // basicAuth wraps next so that it needs the user and the password of the config.

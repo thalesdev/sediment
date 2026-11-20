@@ -10,6 +10,8 @@ import (
 	"slices"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/thalesdev/sediment/internal/ikey"
 	"github.com/thalesdev/sediment/internal/manifest"
 	"github.com/thalesdev/sediment/internal/sstable"
@@ -110,7 +112,13 @@ func (db *DB) flushLoop() {
 		db.mu.Unlock()
 		began := time.Now()
 		db.lg.Debug("flush started", "log", frozen.wal)
+		span := db.startSpan("shale.flush")
 		tbl, err := db.flush(frozen, activeLog)
+		if err != nil {
+			endSpan(span, err)
+		} else {
+			endSpan(span, nil, attribute.Int64("shale.table", int64(tbl.meta.Number)), attribute.Int64("shale.bytes", int64(tbl.meta.Size)))
+		}
 		db.flushes.Add(1)
 		db.flushNanos.Add(int64(time.Since(began)))
 		if err == nil {

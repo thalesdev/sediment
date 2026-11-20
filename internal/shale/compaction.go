@@ -10,6 +10,8 @@ import (
 	"slices"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/thalesdev/sediment/internal/ikey"
 	"github.com/thalesdev/sediment/internal/manifest"
 	"github.com/thalesdev/sediment/internal/merge"
@@ -167,7 +169,13 @@ func (db *DB) compactLoop() {
 		db.mu.Unlock()
 		began := time.Now()
 		db.lg.Debug("compaction started", "tables", len(inputs), "oldest", chosen.includesOldest)
+		span := db.startSpan("shale.compaction")
 		output, err := db.compact(inputs, chosen.includesOldest)
+		var written int64
+		if output != nil {
+			written = int64(output.meta.Size)
+		}
+		endSpan(span, err, attribute.Int("shale.tables", len(inputs)), attribute.Int64("shale.bytes_written", written))
 		db.compactNanos.Add(int64(time.Since(began)))
 		if err == nil {
 			var written uint64

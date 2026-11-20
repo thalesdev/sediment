@@ -95,6 +95,21 @@ func TestParse(t *testing.T) {
 		}
 	})
 
+	t.Run("Should read the settings of the traces", func(t *testing.T) {
+		c, err := parse(t, "otlp-traces yes\ntrace-sample-rate 0.25\n")
+		if err != nil || !c.OTLPTraces || c.TraceSampleRate != 0.25 {
+			t.Fatalf("got %+v, %v", c, err)
+		}
+		if c, _ = parse(t, ""); c.TraceSampleRate != 0.01 || c.OTLPTraces {
+			t.Fatalf("got %+v", c)
+		}
+		for _, text := range []string{"trace-sample-rate 1.5\n", "trace-sample-rate -1\n", "trace-sample-rate x\n", "trace-sample-rate NaN\n"} {
+			if _, err := parse(t, text); err == nil {
+				t.Fatalf("%q was accepted", text)
+			}
+		}
+	})
+
 	t.Run("Should refuse unknown keys and bad values", func(t *testing.T) {
 		for _, text := range []string{
 			"tls-cert-fil /x\n", "port 0\n", "port 70000\n", "port abc\n", "sync maybe\n", "timeout -1\n", "read-timeout 0\n",

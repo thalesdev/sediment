@@ -55,8 +55,12 @@ func (c *conn) execute(args [][]byte) (reply resp.Value) {
 	s.totalCommands.Add(1)
 	start := time.Now()
 	c.client.Touch(&spec.Name, start)
+	span := s.startSpan(spec, args)
 	reply = spec.Handler(s.env, c.client, args)
-	s.observe(c.client, spec, 1, len(args)-1, reply.Kind, start)
+	s.observe(c.client, spec, 1, len(args)-1, reply.Kind, start, traceID(span))
+	if span != nil {
+		endSpan(span, reply)
+	}
 	return reply
 }
 

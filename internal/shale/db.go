@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/thalesdev/sediment/internal/batch"
 	"github.com/thalesdev/sediment/internal/ikey"
 	"github.com/thalesdev/sediment/internal/sstable"
@@ -40,6 +42,7 @@ type DB struct {
 	dir   string
 	opts  Options
 	lg    *slog.Logger
+	tr    trace.Tracer
 	lock  *os.File
 	cache *sstable.BlockCache
 

@@ -3,7 +3,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -11,10 +13,15 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	"github.com/thalesdev/sediment/internal/shale"
 	"github.com/thalesdev/sediment/resp"
 	"github.com/thalesdev/sediment/server"
 	"github.com/thalesdev/sediment/server/acl"
@@ -206,4 +213,104 @@ func (r *recorder) WriteHeader(code int)        { r.code = code }
 
 func portString(p int) string {
 	return strconv.Itoa(p)
+}
+
+func TestTracing(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder), sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	start := func(t *testing.T, rate float64, tracer bool) (net.Conn, *resp.Reader, *resp.Writer, *bytes.Buffer) {
+		t.Helper()
+		var logs bytes.Buffer
+		o := server.Options{Store: openStore(t), TraceSampleRate: rate, SlowLogThreshold: time.Nanosecond, Log: slog.New(slog.NewTextHandler(&logs, nil))}
+		if tracer {
+			o.Tracer = provider.Tracer("test")
+		}
+		srv, err := server.New(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		go srv.Serve(l)
+		t.Cleanup(func() { srv.Shutdown(context.Background()) })
+		nc, err := net.Dial("tcp", l.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { nc.Close() })
+		return nc, resp.NewReader(nc, resp.Limits{}), resp.NewWriter(nc), &logs
+	}
+	attr := func(s sdktrace.ReadOnlySpan, key string) (attribute.Value, bool) {
+		for _, kv := range s.Attributes() {
+			if string(kv.Key) == key {
+				return kv.Value, true
+			}
+		}
+		return attribute.Value{}, false
+	}
+	t.Run("Should make a span for each command with its name, key count, result and reply size, and no key", func(t *testing.T) {
+		recorder.Reset()
+		nc, r, w, logs := start(t, 1, true)
+		runCommand(t, nc, r, w, "SET", "secret-key", "secret-value")
+		runCommand(t, nc, r, w, "MGET", "secret-key", "other")
+		runCommand(t, nc, r, w, "INCR", "secret-key")
+		spans := recorder.Ended()
+		if len(spans) != 3 {
+			t.Fatalf("got %d spans", len(spans))
+		}
+		keys := map[string]int64{"set": 1, "mget": 2, "incr": 1}
+		for _, s := range spans {
+			if n, _ := attr(s, "sediment.keys"); n.AsInt64() != keys[s.Name()] {
+				t.Errorf("%s has %d keys", s.Name(), n.AsInt64())
+			}
+			for _, kv := range s.Attributes() {
+				if strings.Contains(kv.Value.Emit(), "secret") {
+					t.Errorf("%s has %q in %s", s.Name(), kv.Value.Emit(), kv.Key)
+				}
+			}
+		}
+		if res, _ := attr(spans[2], "sediment.result"); res.AsString() != "error" {
+			t.Fatalf("got %q", res.AsString())
+		}
+		if !strings.Contains(logs.String(), "trace_id="+spans[0].SpanContext().TraceID().String()) {
+			t.Fatalf("the slow command log has no trace id:\n%s", logs.String())
+		}
+	})
+	t.Run("Should make no span at rate 0 and none without a tracer", func(t *testing.T) {
+		recorder.Reset()
+		nc, r, w, _ := start(t, 0, true)
+		runCommand(t, nc, r, w, "SET", "k", "v")
+		nc2, r2, w2, _ := start(t, 1, false)
+		runCommand(t, nc2, r2, w2, "SET", "k", "v")
+		if n := len(recorder.Ended()); n != 0 {
+			t.Fatalf("got %d spans", n)
+		}
+	})
+	t.Run("Should make a span for a flush and for a compaction", func(t *testing.T) {
+		recorder.Reset()
+		db, err := shale.Open(t.TempDir(), shale.Options{MemtableSize: 4 << 10, Tracer: provider.Tracer("test")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range 2000 {
+			if err := db.Put([]byte(fmt.Sprintf("key-%06d", i)), bytes.Repeat([]byte("v"), 100)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := db.WaitIdle(); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		names := map[string]int{}
+		for _, s := range recorder.Ended() {
+			names[s.Name()]++
+		}
+		if names["shale.flush"] == 0 || names["shale.compaction"] == 0 {
+			t.Fatalf("got %v", names)
+		}
+	})
 }

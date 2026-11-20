@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/thalesdev/sediment/internal/shale"
 	"github.com/thalesdev/sediment/resp"
@@ -340,8 +341,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return fmt.Errorf("metrics: %w", err)
 	}
 	var meter metric.Meter
+	var tracer trace.Tracer
 	if tel != nil {
-		meter = tel.meter
+		meter, tracer = tel.meter, tel.tracer
 		defer func() {
 			if err := tel.shutdown(context.Background()); err != nil {
 				log.Error("metrics shutdown", "err", err)
@@ -363,7 +365,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return err
 	}
-	db, err := shale.Open(cfg.Dir, shale.Options{Sync: cfg.Sync, MemtableSize: cfg.MemtableSize, BlockCacheSize: cfg.BlockCacheSize, CompactionFilter: command.ExpiredFilter(nil), Logger: log})
+	db, err := shale.Open(cfg.Dir, shale.Options{Sync: cfg.Sync, MemtableSize: cfg.MemtableSize, BlockCacheSize: cfg.BlockCacheSize, CompactionFilter: command.ExpiredFilter(nil), Logger: log, Tracer: tracer})
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -384,6 +386,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		Access:           access,
 		Limits:           resp.Limits{MaxBulk: cfg.MaxBulk, MaxArgs: cfg.MaxArgs},
 		Meter:            meter,
+		Tracer:           tracer,
+		TraceSampleRate:  cfg.TraceSampleRate,
 		CertUser:         cfg.TLSAuthClientsUser,
 		MaxClients:       cfg.MaxClients,
 		SlowLogThreshold: slowLogThreshold(cfg.SlowLogSlowerThan),
