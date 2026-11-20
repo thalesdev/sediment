@@ -4,6 +4,7 @@ package command
 
 import (
 	"errors"
+	"math"
 	"strconv"
 
 	"github.com/thalesdev/sediment/internal/shale"
@@ -72,4 +73,16 @@ func printable(s []byte, max int) string {
 func parseInt(b []byte) (int64, bool) {
 	n, err := strconv.ParseInt(string(b), 10, 64)
 	return n, err == nil
+}
+
+// toInt converts n to an int, and limits it to the range of 32 bits, so the
+// conversion is the same on every platform.
+func toInt(n int64) int {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if n < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int(n)
 }

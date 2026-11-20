@@ -482,7 +482,7 @@ func collScan(env *Env, cl *Client, args [][]byte, name string, typ valueType, w
 			if n < 1 {
 				return replySyntax
 			}
-			count = int(min(n, maxScanCount))
+			count = toInt(min(n, maxScanCount))
 		default:
 			return replySyntax
 		}

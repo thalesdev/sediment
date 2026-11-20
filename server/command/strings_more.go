@@ -224,7 +224,7 @@ func setrange(env *Env, cl *Client, args [][]byte) resp.Value {
 	if len(patch) == 0 {
 		return resp.Integer(int64(len(old)))
 	}
-	size := max(len(old), int(offset)+len(patch))
+	size := max(len(old), toInt(offset)+len(patch))
 	value := make([]byte, size)
 	copy(value, old)
 	copy(value[offset:], patch)

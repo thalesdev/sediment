@@ -310,7 +310,7 @@ func spop(env *Env, cl *Client, args [][]byte) resp.Value {
 	defer snap.Release()
 	want := 1
 	if given {
-		want = int(min(n, int64(c.count)))
+		want = toInt(min(n, int64(c.count)))
 	}
 	if !c.found || want == 0 {
 		if given {
@@ -363,7 +363,7 @@ func srandmember(env *Env, _ *Client, args [][]byte) resp.Value {
 		}
 		return resp.Bulk(picked[0])
 	case n > 0:
-		picked, err := c.sample(snap, int(min(n, int64(c.count))))
+		picked, err := c.sample(snap, toInt(min(n, int64(c.count))))
 		if err != nil {
 			return env.storageError("srandmember", err)
 		}
@@ -379,7 +379,7 @@ func srandmember(env *Env, _ *Client, args [][]byte) resp.Value {
 	case !complete || len(all) == 0:
 		return replyReplyBig
 	}
-	times := int(min(-n, int64(env.MaxReply)))
+	times := toInt(min(-n, int64(env.MaxReply)))
 	out := make([]resp.Value, 0, min(times, 1<<16))
 	total := 0
 	for range times {
