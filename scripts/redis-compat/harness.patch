@@ -1,0 +1,19 @@
+diff --git a/tests/support/server.tcl b/tests/support/server.tcl
+index c4e24aa..787c279 100644
+--- a/tests/support/server.tcl
++++ b/tests/support/server.tcl
+@@ -519,13 +519,7 @@ proc run_external_server_test {code overrides} {
+     }
+ 
+     r flushall
+-    r function flush
+-    r script flush
+-    r config resetstat
+-
+-    # Resolve client dynamically via srv (not the captured $client variable)
+-    # to handle reconnections that replace the client in ::servers.
+-    set saved_config [save_single_server_config [srv 0 "client"]]
++    set saved_config {}
+ 
+     # apply overrides
+     foreach {param val} $overrides {

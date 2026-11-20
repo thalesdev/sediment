@@ -86,6 +86,22 @@ func (l *Locks) UnlockStripes(stripes []int) {
 	}
 }
 
+// LockAll takes the exclusive lock of every stripe, in order, so no write of any key
+// runs until UnlockAll. A command that changes every key, such as FLUSHALL, uses
+// it.
+func (l *Locks) LockAll() {
+	for i := range l.mu {
+		l.mu[i].Lock()
+	}
+}
+
+// UnlockAll releases the locks that LockAll took.
+func (l *Locks) UnlockAll() {
+	for i := range l.mu {
+		l.mu[i].Unlock()
+	}
+}
+
 // RLockKeys takes the shared locks of all the keys, in the order of their
 // stripes, and returns the stripes to give to RUnlockStripes.
 func (l *Locks) RLockKeys(n int, key func(i int) []byte) []int {

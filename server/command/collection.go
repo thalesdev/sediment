@@ -134,6 +134,24 @@ func (c *coll) finish(b *shale.Batch, count uint64) error {
 	return c.env.Store.Write(b)
 }
 
+// stage adds to b the write of the KEY record with the new number of elements, and the
+// OWNER record of a collection that is new, or the delete of the whole collection if
+// the number is zero. It does not write b, so that two collections can change in one
+// write.
+func (c *coll) stage(b *shale.Batch, count uint64) {
+	switch {
+	case count == 0 && !c.found:
+		return
+	case count == 0:
+		batchDelete(b, c.key, c.rec)
+		return
+	}
+	b.Put(keyOf(c.key), encodeRecord(c.typ, c.rec.deadline, collectionBody(c.uid, count)))
+	if !c.found {
+		b.Put(ownerKey(c.slot, c.uid), c.key)
+	}
+}
+
 // collAt reads a collection as of a snapshot. A key that is absent or expired
 // gives a collection that is not found, and a key of another type gives
 // errWrongType.

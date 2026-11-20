@@ -37,7 +37,9 @@ that had returned survives a `kill -9`.
 | Public Go API | Not yet: Shale lives in `internal/shale` until the server shapes it |
 
 The commands, types and ACL features that work, and the ones that do not, are in
-[docs/RESP.md](docs/RESP.md). The threat model is in [SECURITY.md](SECURITY.md).
+[docs/RESP.md](docs/RESP.md). How much of the official test suite of Redis passes, and
+how to run it, is in [docs/REDIS-COMPATIBILITY.md](docs/REDIS-COMPATIBILITY.md). The threat
+model is in [SECURITY.md](SECURITY.md).
 
 ## Run it
 

@@ -40,6 +40,16 @@ func (v *Versions) Load(user []byte) uint64 {
 	return v.counters[v.index(user)].Load()
 }
 
+// BumpAll adds one to the count of every key, so a WATCH of any key sees a change.
+func (v *Versions) BumpAll() {
+	if v == nil {
+		return
+	}
+	for i := range v.counters {
+		v.counters[i].Add(1)
+	}
+}
+
 // bump adds one to the count of the user key of an engine key, if the engine key
 // is a KEY record. The records of elements do not count, because every write of a
 // collection also writes its KEY record.

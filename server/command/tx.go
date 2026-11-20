@@ -135,6 +135,9 @@ func (c *Client) runlockStripes(env *Env, stripes []int) {
 
 // KeysOf returns the keys of a command, from the positions in its Spec.
 func KeysOf(spec *Spec, args [][]byte) [][]byte {
+	if spec.KeyFunc != nil {
+		return spec.KeyFunc(args)
+	}
 	if spec.FirstKey <= 0 {
 		return nil
 	}

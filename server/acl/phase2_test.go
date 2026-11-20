@@ -67,14 +67,17 @@ func TestKeyPatterns(t *testing.T) {
 		}
 	})
 	t.Run("Should say who can list the keys", func(t *testing.T) {
-		if userOf(t, "user u on nopass ~a:* +@all").allKeys() {
+		if userOf(t, "user u on nopass ~a:* +@all").allKeys(false) {
 			t.Fatal("a pattern user can list every key")
 		}
-		if !userOf(t, "user u on nopass %R~* +@all").allKeys() {
+		if !userOf(t, "user u on nopass %R~* +@all").allKeys(false) {
 			t.Fatal("a read all user cannot list keys")
 		}
-		if userOf(t, "user u on nopass %W~* +@all").allKeys() {
+		if userOf(t, "user u on nopass %W~* +@all").allKeys(false) {
 			t.Fatal("a write only user can list keys")
+		}
+		if !userOf(t, "user u on nopass %W~* +@all").allKeys(true) || userOf(t, "user u on nopass %R~* +@all").allKeys(true) {
+			t.Fatal("wrong answer for the right to write every key")
 		}
 	})
 }

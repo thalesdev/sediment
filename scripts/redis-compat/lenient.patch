@@ -1,0 +1,15 @@
+diff --git a/tests/support/redis.tcl b/tests/support/redis.tcl
+index 1ea72db..6199f44 100644
+--- a/tests/support/redis.tcl
++++ b/tests/support/redis.tcl
+@@ -123,6 +123,10 @@ proc ::redis::__dispatch__ {id method args} {
+ }
+ 
+ proc ::redis::__dispatch__raw__ {id method argv} {
++    # sediment: with SEDIMENT_LENIENT set, CONFIG SET does nothing and answers OK.
++    if {[info exists ::env(SEDIMENT_LENIENT)] && [string equal -nocase $method config] && [string equal -nocase [lindex $argv 0] set]} {
++        return OK
++    }
+     set fd $::redis::fd($id)
+ 
+     # Reconnect the link if needed.

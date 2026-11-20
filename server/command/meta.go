@@ -19,7 +19,7 @@ func itoa(n int64) string {
 // metaCommands returns COMMAND, INFO, ACL and CONFIG.
 func metaCommands() []*Spec {
 	return []*Spec{
-		{Name: "command", Arity: -1, Categories: acl.CatSlow | acl.CatConnection, Subs: []string{"info", "count", "list"}, Handler: commandCmd},
+		{Name: "command", Arity: -1, Categories: acl.CatSlow | acl.CatConnection, Subs: []string{"info", "count", "list", "docs", "getkeys", "getkeysandflags"}, Handler: commandCmd},
 		{Name: "info", Arity: -1, Categories: acl.CatSlow | acl.CatDangerous, Handler: info},
 		{Name: "acl", Arity: -2, Categories: acl.CatSlow | acl.CatAdmin | acl.CatDangerous, Subs: []string{"whoami", "cat", "users", "list", "load", "setuser", "deluser", "getuser", "save", "log"}, Handler: aclCmd},
 		{Name: "config", Arity: -2, Categories: acl.CatSlow | acl.CatAdmin | acl.CatDangerous, Subs: []string{"get"}, Handler: config},
@@ -85,6 +85,10 @@ func commandCmd(env *Env, _ *Client, args [][]byte) resp.Value {
 		return resp.Array(out...)
 	case "DOCS":
 		return resp.Map()
+	case "GETKEYS":
+		return commandKeys(env, args, false)
+	case "GETKEYSANDFLAGS":
+		return commandKeys(env, args, true)
 	case "INFO":
 		out := make([]resp.Value, 0, len(args)-2)
 		for _, name := range args[2:] {
@@ -115,6 +119,9 @@ func specInfo(s *Spec) resp.Value {
 	}
 	if s.NoAuth {
 		flags = append(flags, resp.Simple("no_auth"))
+	}
+	if s.KeyFunc != nil {
+		flags = append(flags, resp.Simple("movablekeys"))
 	}
 	cats := make([]resp.Value, 0, 4)
 	for _, n := range s.Categories.Names() {

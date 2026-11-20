@@ -157,6 +157,8 @@ func (c *conn) loop() {
 		}
 		if !wasAuthed && c.client.Authed {
 			c.r.SetLimits(c.s.limitsFor(true))
+		} else if wasAuthed && !c.client.Authed {
+			c.r.SetLimits(c.s.limitsFor(false))
 		}
 	}
 }

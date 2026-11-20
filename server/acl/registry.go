@@ -166,7 +166,13 @@ func (r *Registry) Allowed(name, command, sub string, cats Category, keys [][]by
 // list keys, KEYS, SCAN and RANDOMKEY, need it.
 func (r *Registry) AllKeysReadable(name string) bool {
 	u := r.get(name)
-	return u != nil && u.allKeys()
+	return u != nil && u.allKeys(false)
+}
+
+// AllKeysWritable reports whether the user can write every key. FLUSHALL needs it.
+func (r *Registry) AllKeysWritable(name string) bool {
+	u := r.get(name)
+	return u != nil && u.allKeys(true)
 }
 
 // Active reports whether the user exists and is on.
