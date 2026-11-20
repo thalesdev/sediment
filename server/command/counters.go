@@ -34,26 +34,26 @@ func counterCommands() []*Spec {
 }
 
 // incr is INCR key.
-func incr(env *Env, _ *Client, args [][]byte) resp.Value {
-	return addInt(env, "incr", args[1], 1)
+func incr(env *Env, cl *Client, args [][]byte) resp.Value {
+	return addInt(env, cl, "incr", args[1], 1)
 }
 
 // decr is DECR key.
-func decr(env *Env, _ *Client, args [][]byte) resp.Value {
-	return addInt(env, "decr", args[1], -1)
+func decr(env *Env, cl *Client, args [][]byte) resp.Value {
+	return addInt(env, cl, "decr", args[1], -1)
 }
 
 // incrby is INCRBY key increment.
-func incrby(env *Env, _ *Client, args [][]byte) resp.Value {
+func incrby(env *Env, cl *Client, args [][]byte) resp.Value {
 	delta, ok := parseInt(args[2])
 	if !ok {
 		return replyNotInt
 	}
-	return addInt(env, "incrby", args[1], delta)
+	return addInt(env, cl, "incrby", args[1], delta)
 }
 
 // decrby is DECRBY key decrement.
-func decrby(env *Env, _ *Client, args [][]byte) resp.Value {
+func decrby(env *Env, cl *Client, args [][]byte) resp.Value {
 	delta, ok := parseInt(args[2])
 	if !ok {
 		return replyNotInt
@@ -61,17 +61,17 @@ func decrby(env *Env, _ *Client, args [][]byte) resp.Value {
 	if delta == math.MinInt64 {
 		return replyOverflow
 	}
-	return addInt(env, "decrby", args[1], -delta)
+	return addInt(env, cl, "decrby", args[1], -delta)
 }
 
 // addInt adds delta to the integer stored at key, as one atomic step. A missing
 // key counts as zero.
-func addInt(env *Env, name string, key []byte, delta int64) resp.Value {
+func addInt(env *Env, cl *Client, name string, key []byte, delta int64) resp.Value {
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	var cur, deadline int64
 	old, deadline, err := env.load(key)
 	switch {
@@ -95,13 +95,13 @@ func addInt(env *Env, name string, key []byte, delta int64) resp.Value {
 }
 
 // appendCmd is APPEND key value. It replies with the new length.
-func appendCmd(env *Env, _ *Client, args [][]byte) resp.Value {
+func appendCmd(env *Env, cl *Client, args [][]byte) resp.Value {
 	key, suffix := args[1], args[2]
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	old, deadline, err := env.load(key)
 	if err != nil && !isNotFound(err) {
 		return env.storageError("append", err)
@@ -133,14 +133,14 @@ func strlen(env *Env, _ *Client, args [][]byte) resp.Value {
 }
 
 // setnx is SETNX key value. It replies 1 if the key was set and 0 if it exists.
-func setnx(env *Env, _ *Client, args [][]byte) resp.Value {
+func setnx(env *Env, cl *Client, args [][]byte) resp.Value {
 	key := args[1]
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
-	if _, _, err := env.load(key); err == nil {
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
+	if _, err := env.loadRecord(key); err == nil {
 		return resp.Integer(0)
 	} else if !isNotFound(err) {
 		return env.storageError("setnx", err)
@@ -152,13 +152,13 @@ func setnx(env *Env, _ *Client, args [][]byte) resp.Value {
 }
 
 // getset is GETSET key value. It replies with the old value, or null.
-func getset(env *Env, _ *Client, args [][]byte) resp.Value {
+func getset(env *Env, cl *Client, args [][]byte) resp.Value {
 	key := args[1]
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	old, _, err := env.load(key)
 	found := err == nil
 	if err != nil && !isNotFound(err) {
@@ -171,13 +171,13 @@ func getset(env *Env, _ *Client, args [][]byte) resp.Value {
 }
 
 // getdel is GETDEL key. It replies with the old value, or null.
-func getdel(env *Env, _ *Client, args [][]byte) resp.Value {
+func getdel(env *Env, cl *Client, args [][]byte) resp.Value {
 	key := args[1]
 	if bad, ok := env.checkKey(key); !ok {
 		return bad
 	}
-	stripe := env.Locks.Lock(key)
-	defer env.Locks.Unlock(stripe)
+	stripe := cl.lock(env, key)
+	defer cl.unlock(env, stripe)
 	old, _, err := env.load(key)
 	if isNotFound(err) {
 		return resp.Null()
@@ -185,7 +185,7 @@ func getdel(env *Env, _ *Client, args [][]byte) resp.Value {
 	if err != nil {
 		return env.storageError("getdel", err)
 	}
-	if err := env.Store.Delete(key); err != nil {
+	if err := env.Store.Delete(keyOf(key)); err != nil {
 		return env.storageError("getdel", err)
 	}
 	return resp.Bulk(old)

@@ -247,6 +247,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 			log.Error("close database", "err", err)
 		}
 	}()
+	if err := command.EnsureFormat(db); err != nil {
+		return fmt.Errorf("data directory %s: %w", cfg.Dir, err)
+	}
 	if rec := db.Recovery(); rec.ManifestDroppedBytes > 0 {
 		log.Warn("the MANIFEST had damaged bytes, table files were moved to lost/", "tables", rec.KeptTables)
 	}
@@ -258,6 +261,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		MaxClients:     cfg.MaxClients,
 		MaxKey:         cfg.MaxKey,
 		IdleTimeout:    cfg.Timeout,
+		SweepInterval:  cfg.SweepInterval,
+		BackupDir:      cfg.BackupDir,
 		ReadTimeout:    cfg.ReadTimeout,
 		WriteTimeout:   cfg.WriteTimeout,
 		PreAuthTimeout: cfg.PreAuthTimeout,

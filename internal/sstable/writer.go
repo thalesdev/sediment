@@ -64,7 +64,8 @@ func (o Options) withDefaults() Options {
 
 // Writer writes a table to dst. The caller must add keys in strictly increasing
 // order.
-// Finish writes the filter, the metaindex, the index and the footer, and then
+// Finish writes the filter, the range deletes if there are any, the metaindex, the
+// index and the footer, and then
 // syncs dst. The Writer does not close dst.
 type Writer struct {
 	dst    syncWriter
@@ -73,6 +74,10 @@ type Writer struct {
 	data   *blockWriter
 	index  *blockWriter
 	filter *filterWriter
+
+	rangeDels    *blockWriter
+	lastRangeKey []byte
+	rangeEntries int
 
 	lastKey   []byte
 	entries   int
@@ -119,6 +124,29 @@ func (w *Writer) Add(key, value []byte) error {
 	return nil
 }
 
+// AddRangeDel appends a range delete. The key orders the range delete with the
+// others, and the end is the value that the reader gives back with it. The table
+// keeps them in a meta block of their own, so they are not in the data blocks, and
+// they do not go into the filter. The caller must add them in strictly increasing
+// order of key, and the order is independent of the order of Add. It panics if key
+// is not greater than the previous one. A table can have range deletes and no
+// other entry.
+func (w *Writer) AddRangeDel(key, end []byte) error {
+	if w.err != nil {
+		return w.err
+	}
+	if w.rangeEntries > 0 && w.opts.Compare(w.lastRangeKey, key) >= 0 {
+		panic("sstable: range deletes must be added in strictly increasing order")
+	}
+	if w.rangeDels == nil {
+		w.rangeDels = newBlockWriter(w.opts.RestartInterval)
+	}
+	w.rangeDels.add(key, end)
+	w.lastRangeKey = append(w.lastRangeKey[:0], key...)
+	w.rangeEntries++
+	return nil
+}
+
 // Finish completes the table and syncs dst. After Finish, a call to Add or Finish
 // returns an error.
 func (w *Writer) Finish() error {
@@ -136,6 +164,13 @@ func (w *Writer) Finish() error {
 
 	metaindex := newBlockWriter(w.opts.RestartInterval)
 	metaindex.add([]byte(filterMetaKey), filterHandle.append(w.handleBuf[:0]))
+	if w.rangeEntries > 0 {
+		rangeHandle, err := w.writeBlock(w.rangeDels.finish())
+		if err != nil {
+			return err
+		}
+		metaindex.add([]byte(rangeDelMetaKey), rangeHandle.append(w.handleBuf[:0]))
+	}
 	metaindexHandle, err := w.writeBlock(metaindex.finish())
 	if err != nil {
 		return err

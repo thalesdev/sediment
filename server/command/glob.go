@@ -106,18 +106,6 @@ func matchClass(pattern []byte, p int, c byte) (bool, int) {
 	return matched != negate, q
 }
 
-// globPrefix returns the bytes at the start of the pattern that only match
-// themselves. Every key that matches the pattern starts with them.
-func globPrefix(pattern []byte) []byte {
-	for i, c := range pattern {
-		switch c {
-		case '*', '?', '[', '\\':
-			return pattern[:i]
-		}
-	}
-	return pattern
-}
-
 // prefixEnd returns the smallest key that is greater than every key that starts
 // with prefix, or nil if there is none.
 func prefixEnd(prefix []byte) []byte {

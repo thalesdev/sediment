@@ -22,6 +22,11 @@ const (
 
 	filterMetaKey = "filter.leveldb.BuiltinBloomFilter"
 
+	// rangeDelMetaKey names the meta block that holds the range deletes of a table.
+	// LevelDB ignores a metaindex entry that it does not know, so it still reads the
+	// data blocks of a table that has one.
+	rangeDelMetaKey = "shale.range_del"
+
 	maskDelta = 0xa282ead8
 )
 

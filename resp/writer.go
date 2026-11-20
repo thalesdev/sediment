@@ -82,6 +82,12 @@ func (w *Writer) write(v Value) {
 		} else {
 			w.raw("$-1\r\n")
 		}
+	case KindNullArray:
+		if v3 {
+			w.raw("_\r\n")
+		} else {
+			w.raw("*-1\r\n")
+		}
 	case KindBool:
 		w.writeBool(v.Bool, v3)
 	case KindDouble:

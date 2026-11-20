@@ -14,14 +14,14 @@ import (
 
 type op struct {
 	seq   uint64
-	kind  ikey.Kind
+	kind  Kind
 	key   []byte
 	value []byte
 }
 
 func collect(v View) []op {
 	var out []op
-	v.ForEach(func(seq uint64, kind ikey.Kind, key, value []byte) {
+	v.ForEach(func(seq uint64, kind Kind, key, value []byte) {
 		out = append(out, op{seq, kind, bytes.Clone(key), bytes.Clone(value)})
 	})
 	return out
@@ -73,11 +73,11 @@ func TestBatch(t *testing.T) {
 		}
 		got := collect(v)
 		want := []op{
-			{41, ikey.KindPut, nil, nil},
-			{42, ikey.KindPut, []byte("key"), long},
-			{43, ikey.KindDelete, long, nil},
-			{44, ikey.KindDelete, nil, nil},
-			{45, ikey.KindPut, long, []byte("v")},
+			{41, KindPut, nil, nil},
+			{42, KindPut, []byte("key"), long},
+			{43, KindDelete, long, nil},
+			{44, KindDelete, nil, nil},
+			{45, KindPut, long, []byte("v")},
 		}
 		if v.Seq() != 41 || v.Count() != 5 || len(got) != len(want) {
 			t.Fatalf("Seq=%d Count=%d ops=%d", v.Seq(), v.Count(), len(got))
@@ -139,8 +139,57 @@ func TestParseCorruption(t *testing.T) {
 	})
 
 	t.Run("Should reject a kind that is not valid", func(t *testing.T) {
-		for _, kind := range []byte{2, 3, 0xff} {
+		for _, kind := range []byte{3, 4, 0xff} {
 			assertCorrupt(t, append(header(1, 1), kind, 0, 0))
+		}
+	})
+
+	t.Run("Should write a range delete as a put whose value is the end", func(t *testing.T) {
+		var b Batch
+		b.Reset(5)
+		b.Put([]byte("a"), []byte("b"))
+		b.DeleteRange([]byte("c"), []byte("de"))
+		want := []byte{
+			5, 0, 0, 0, 0, 0, 0, 0,
+			2, 0, 0, 0,
+			1, 1, 'a', 1, 'b',
+			2, 1, 'c', 2, 'd', 'e',
+		}
+		if !bytes.Equal(b.Bytes(), want) {
+			t.Fatalf("got % x, want % x", b.Bytes(), want)
+		}
+		v, err := Parse(b.Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := collect(v)
+		if len(got) != 2 || got[1].kind != KindRangeDelete || got[1].seq != 6 || string(got[1].key) != "c" || string(got[1].value) != "de" {
+			t.Fatalf("got %+v", got)
+		}
+	})
+
+	t.Run("Should reject a range delete that does not have its start below its end", func(t *testing.T) {
+		for _, pair := range [][2]string{{"b", "a"}, {"a", "a"}, {"", ""}} {
+			var b Batch
+			b.Reset(1)
+			b.DeleteRange([]byte(pair[0]), []byte(pair[1]))
+			assertCorrupt(t, b.Bytes())
+		}
+		var ok Batch
+		ok.Reset(1)
+		ok.DeleteRange(nil, []byte{0})
+		if _, err := Parse(ok.Bytes()); err != nil {
+			t.Fatalf("the empty key is a valid start: %v", err)
+		}
+	})
+
+	t.Run("Should reject a range delete that is cut at any length", func(t *testing.T) {
+		var b Batch
+		b.Reset(1)
+		b.DeleteRange([]byte("start"), []byte("end-of-the-range"))
+		data := bytes.Clone(b.Bytes())
+		for n := HeaderSize; n < len(data); n++ {
+			assertCorrupt(t, data[:n])
 		}
 	})
 
@@ -181,6 +230,7 @@ func FuzzParse(f *testing.F) {
 	b.Reset(3)
 	b.Put([]byte("key"), []byte("value"))
 	b.Delete([]byte("gone"))
+	b.DeleteRange([]byte("a"), []byte("b"))
 	f.Add(bytes.Clone(b.Bytes()))
 	f.Add([]byte{})
 	f.Add(header(1, 1))
@@ -199,9 +249,12 @@ func FuzzParse(f *testing.F) {
 		var again Batch
 		again.Reset(v.Seq())
 		for _, o := range ops {
-			if o.kind == ikey.KindPut {
+			switch o.kind {
+			case KindPut:
 				again.Put(o.key, o.value)
-			} else {
+			case KindRangeDelete:
+				again.DeleteRange(o.key, o.value)
+			default:
 				again.Delete(o.key)
 			}
 		}

@@ -50,6 +50,12 @@ func (s nopStore) Put(_, _ []byte) error      { return nil }
 func (s nopStore) Delete([]byte) error        { return nil }
 func (s nopStore) Write(*shale.Batch) error   { return nil }
 func (s nopStore) Metrics() shale.Metrics     { return shale.Metrics{} }
+func (s nopStore) Snapshot() (*shale.Snapshot, error) {
+	return nil, nil
+}
+func (s nopStore) Checkpoint(string) (shale.CheckpointInfo, error) {
+	return shale.CheckpointInfo{}, nil
+}
 func (s nopStore) NewIterator(*shale.IterOptions) (shale.Iterator, error) {
 	return nil, nil
 }
@@ -111,7 +117,8 @@ func shaleStoreCache(b *testing.B, keys int, memtable, cache int) command.Store 
 	b.Cleanup(func() { db.Close() })
 	var batch shale.Batch
 	for i := range keys {
-		batch.Put(fmt.Appendf(nil, "key:%012d", i), benchValue)
+		k, v := command.EncodeString(fmt.Appendf(nil, "key:%012d", i), benchValue)
+		batch.Put(k, v)
 		if batch.Len() == 1000 {
 			if err := db.Write(&batch); err != nil {
 				b.Fatal(err)

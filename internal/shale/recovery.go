@@ -122,7 +122,7 @@ func (db *DB) open() (err error) {
 
 	if entries > 0 {
 		number := db.nextFile.Add(1) - 1
-		meta, err := db.writeTable(replayed.list, number)
+		meta, err := db.writeTable(replayed, number)
 		if err != nil {
 			return err
 		}
@@ -218,10 +218,15 @@ func (db *DB) replayLog(mem *memtable, n, last uint64) (uint64, int, error) {
 			return 0, 0, fmt.Errorf("shale: %s: batch with sequence number %d does not follow %d: %w", name, view.Seq(), last, batch.ErrCorrupt)
 		}
 		var insertErr error
-		view.ForEach(func(seq uint64, kind ikey.Kind, key, value []byte) {
-			if insertErr == nil {
-				insertErr = mem.list.Insert(ikey.Append(nil, key, seq, kind), value)
+		view.ForEach(func(seq uint64, kind batch.Kind, key, value []byte) {
+			if insertErr != nil {
+				return
 			}
+			if kind == batch.KindRangeDelete {
+				mem.addRange(key, value, seq)
+				return
+			}
+			insertErr = mem.list.Insert(ikey.Append(nil, key, seq, ikey.Kind(kind)), value)
 		})
 		if insertErr != nil {
 			return 0, 0, fmt.Errorf("shale: %s: %w", name, insertErr)

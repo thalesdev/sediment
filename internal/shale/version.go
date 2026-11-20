@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +28,68 @@ type memtable struct {
 	// maxSeq is the largest sequence number in the memtable. The DB sets it when
 	// it freezes the memtable.
 	maxSeq uint64
+
+	tombMu    sync.Mutex
+	tombs     []rangeTomb
+	tombCount atomic.Int64
+	tombBytes atomic.Int64
+	tombIdx   atomic.Pointer[tombIndex]
+}
+
+// addRange adds a range delete with sequence number seq. It copies start and end.
+// The writer of the memtable calls it, and so does recovery.
+func (m *memtable) addRange(start, end []byte, seq uint64) {
+	t := rangeTomb{start: bytes.Clone(start), end: bytes.Clone(end), seq: seq}
+	m.tombMu.Lock()
+	m.tombs = append(m.tombs, t)
+	m.tombMu.Unlock()
+	m.tombBytes.Add(int64(len(start) + len(end) + tombOverhead))
+	m.tombCount.Add(1)
+}
+
+// cover returns the index of the range deletes of the memtable, or nil if it
+// has none. It builds the index again when range deletes came after the last one.
+// A reader that gets it sees every range delete that was added before the call.
+func (m *memtable) cover() *tombIndex {
+	n := int(m.tombCount.Load())
+	if n == 0 {
+		return nil
+	}
+	if idx := m.tombIdx.Load(); idx != nil && idx.count >= n {
+		return idx
+	}
+	m.tombMu.Lock()
+	defer m.tombMu.Unlock()
+	if idx := m.tombIdx.Load(); idx != nil && idx.count == len(m.tombs) {
+		return idx
+	}
+	idx := newTombIndex(m.tombs)
+	m.tombIdx.Store(idx)
+	return idx
+}
+
+// rangeTombs returns a copy of the list of the range deletes of the memtable.
+func (m *memtable) rangeTombs() []rangeTomb {
+	m.tombMu.Lock()
+	defer m.tombMu.Unlock()
+	return slices.Clone(m.tombs)
+}
+
+// approximateSize returns the size that the freeze of the memtable depends on: the
+// size of its list and of its range deletes.
+func (m *memtable) approximateSize() int {
+	return m.list.ApproximateSize() + int(m.tombBytes.Load())
+}
+
+// empty tells if the memtable has no entry and no range delete.
+func (m *memtable) empty() bool {
+	if m.tombCount.Load() != 0 {
+		return false
+	}
+	it := m.list.NewIterator()
+	defer it.Close()
+	it.SeekToFirst()
+	return !it.Valid()
 }
 
 // newMemtable returns an empty memtable for the log file with number wal.
@@ -47,6 +111,9 @@ type table struct {
 	refs     atomic.Int64
 	obsolete atomic.Bool
 	cache    *sstable.BlockCache
+
+	tombs   []rangeTomb
+	tombIdx *tombIndex
 }
 
 // unref drops one reference. The last reference closes the file, and removes it
@@ -142,42 +209,69 @@ func openTable(dir string, meta manifest.TableMeta, cache *sstable.BlockCache) (
 		f.Close()
 		return nil, fmt.Errorf("shale: table %s: %w", name, err)
 	}
-	return &table{meta: meta, path: filepath.Join(dir, name), file: f, reader: reader, cache: cache}, nil
+	tombs, err := loadTombs(reader)
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("shale: table %s: %w", name, err)
+	}
+	return &table{meta: meta, path: filepath.Join(dir, name), file: f, reader: reader, cache: cache, tombs: tombs, tombIdx: newTombIndex(tombs)}, nil
 }
 
 // lookupMemtable finds the newest version of user that the lookup key sees in m.
-func lookupMemtable(m *memtable, user, lookup []byte) (value []byte, deleted, found bool, err error) {
+func lookupMemtable(m *memtable, user, lookup []byte) (value []byte, seq uint64, deleted, found bool, err error) {
 	it := m.list.NewIterator()
 	defer it.Close()
 	it.Seek(lookup)
 	if !it.Valid() {
-		return nil, false, false, nil
+		return nil, 0, false, false, nil
 	}
 	return decideEntry(it.Key(), it.Value(), user)
 }
 
 // lookup finds the newest version of user that the lookup key sees in the
 // table. It does not read the table if user is out of the range of its keys.
-func (t *table) lookup(user, lookup []byte) (value []byte, deleted, found bool, err error) {
+func (t *table) lookup(user, lookup []byte) (value []byte, seq uint64, deleted, found bool, err error) {
 	if bytes.Compare(user, ikey.UserKey(t.meta.Smallest)) < 0 || bytes.Compare(user, ikey.UserKey(t.meta.Largest)) > 0 {
-		return nil, false, false, nil
+		return nil, 0, false, false, nil
 	}
 	key, value, ok, err := t.reader.Find(lookup)
 	if err != nil || !ok {
-		return nil, false, false, err
+		return nil, 0, false, false, err
 	}
 	return decideEntry(key, value, user)
 }
 
 // decideEntry tells if the entry with key and value is a version of user. If it
-// is, it tells if the version is a delete.
-func decideEntry(key, value, user []byte) (v []byte, deleted, found bool, err error) {
-	entryUser, _, kind, err := ikey.Parse(key)
+// is, it tells its sequence number and if the version is a delete.
+func decideEntry(key, value, user []byte) (v []byte, seq uint64, deleted, found bool, err error) {
+	entryUser, seq, kind, err := ikey.Parse(key)
 	if err != nil {
-		return nil, false, false, err
+		return nil, 0, false, false, err
 	}
 	if !bytes.Equal(entryUser, user) {
-		return nil, false, false, nil
+		return nil, 0, false, false, nil
 	}
-	return value, kind == ikey.KindDelete, true, nil
+	return value, seq, kind == ikey.KindDelete, true, nil
+}
+
+// loadTombs reads the range deletes of a table, and checks each one: a key that is
+// an internal key with the kind delete, and an end that is above the start. It
+// returns an error that wraps manifest.ErrCorrupt otherwise.
+func loadTombs(r *sstable.Reader) ([]rangeTomb, error) {
+	dels := r.RangeDels()
+	if len(dels) == 0 {
+		return nil, nil
+	}
+	tombs := make([]rangeTomb, 0, len(dels))
+	for _, d := range dels {
+		start, seq, kind, err := ikey.Parse(d.Key)
+		if err != nil {
+			return nil, fmt.Errorf("range delete: %w: %w", manifest.ErrCorrupt, err)
+		}
+		if kind != ikey.KindDelete || bytes.Compare(start, d.End) >= 0 {
+			return nil, fmt.Errorf("range delete of %q to %q is not valid: %w", start, d.End, manifest.ErrCorrupt)
+		}
+		tombs = append(tombs, rangeTomb{start: start, end: d.End, seq: seq})
+	}
+	return tombs, nil
 }

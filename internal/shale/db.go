@@ -3,6 +3,7 @@
 package shale
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"sync"
@@ -124,13 +125,26 @@ func (db *DB) Recovery() Recovery {
 // DB refuses all later writes. Writes that are at the same time can share one
 // record of the log and, if Options.Sync is true, one flush.
 func (db *DB) Put(key, value []byte) error {
-	return db.write(ikey.KindPut, key, value)
+	return db.write(batch.KindPut, key, value)
 }
 
 // Delete deletes key. It is not an error if key does not exist. The caller can
 // use key again after Delete returns.
 func (db *DB) Delete(key []byte) error {
-	return db.write(ikey.KindDelete, key, nil)
+	return db.write(batch.KindDelete, key, nil)
+}
+
+// DeleteRange deletes every key from start up to, and not including, end. It is
+// one write, so it is all or nothing after a crash, and a Get never sees a part
+// of it. It does not read or write each key, so its cost does not depend on how
+// many keys it covers, and the space of the keys is freed by the compactions. A
+// range that is empty or inverted deletes nothing. The caller can use start and
+// end again after DeleteRange returns.
+func (db *DB) DeleteRange(start, end []byte) error {
+	if bytes.Compare(start, end) >= 0 {
+		return nil
+	}
+	return db.write(batch.KindRangeDelete, start, end)
 }
 
 // Get returns a copy of the value of key. It returns ErrNotFound if the key
@@ -166,22 +180,67 @@ func getAt(state *readState, seq uint64, key []byte) ([]byte, error) {
 		if m == nil {
 			continue
 		}
-		value, deleted, found, err := lookupMemtable(m, key, lookup)
-		if err != nil {
-			return nil, err
-		}
-		if found {
-			return answer(value, deleted)
+		value, found, err := decide(key, seq, m.cover(), func() ([]byte, uint64, bool, bool, error) {
+			return lookupMemtable(m, key, lookup)
+		})
+		if err != nil || found != foundNone {
+			return answerOf(value, found, err)
 		}
 	}
 	for _, t := range state.tables {
-		value, deleted, found, err := t.lookup(key, lookup)
-		if err != nil {
-			return nil, err
+		value, found, err := decide(key, seq, t.tombIdx, func() ([]byte, uint64, bool, bool, error) {
+			return t.lookup(key, lookup)
+		})
+		if err != nil || found != foundNone {
+			return answerOf(value, found, err)
 		}
-		if found {
-			return answer(value, deleted)
-		}
+	}
+	return nil, ErrNotFound
+}
+
+// found says what a source of a read knows about a key.
+type found int
+
+const (
+	// foundNone means that the source has nothing that decides the read, and
+	// the read goes on to the next one.
+	foundNone found = iota
+
+	// foundValue means that the source has the newest version, a put.
+	foundValue
+
+	// foundGone means that the key is deleted, by a delete or by a range delete.
+	foundGone
+)
+
+// decide asks one source, through lookup, for the newest version of key, and
+// combines the answer with the range deletes of the source. A range delete with a
+// sequence number above the one of the version hides it, and a range delete alone
+// hides every version in the older sources, because they have smaller sequence
+// numbers. cover holds the range deletes of the source, and snap is the sequence
+// number of the read.
+func decide(key []byte, snap uint64, cover *tombIndex, lookup func() ([]byte, uint64, bool, bool, error)) ([]byte, found, error) {
+	value, seq, deleted, ok, err := lookup()
+	if err != nil {
+		return nil, foundNone, err
+	}
+	covered := cover.maxCover(key, snap)
+	switch {
+	case ok && !deleted && covered < seq:
+		return value, foundValue, nil
+	case ok || covered > 0:
+		return nil, foundGone, nil
+	}
+	return nil, foundNone, nil
+}
+
+// answerOf turns the result of decide into the result of a read.
+func answerOf(value []byte, f found, err error) ([]byte, error) {
+	if err != nil {
+		return nil, err
+	}
+	if f == foundValue {
+		return bytes.Clone(value), nil
 	}
 	return nil, ErrNotFound
 }
@@ -204,14 +263,6 @@ func (db *DB) setState(s *readState) *readState {
 		t.refs.Add(1)
 	}
 	return db.state.Swap(s)
-}
-
-// answer returns a copy of value, or ErrNotFound for a delete.
-func answer(value []byte, deleted bool) ([]byte, error) {
-	if deleted {
-		return nil, ErrNotFound
-	}
-	return append([]byte{}, value...), nil
 }
 
 // Close stops the writes, waits for the group of writes that is in progress and

@@ -36,8 +36,17 @@ const (
 	// CatSlow is for commands that are not fast.
 	CatSlow
 
+	// CatHash is for commands on hashes.
+	CatHash
+
+	// CatSet is for commands on sets.
+	CatSet
+
+	// CatTransaction is for MULTI, EXEC and the commands that go with them.
+	CatTransaction
+
 	// CatAll is the mask of every category.
-	CatAll = CatRead | CatWrite | CatAdmin | CatDangerous | CatConnection | CatKeyspace | CatString | CatFast | CatSlow
+	CatAll = CatRead | CatWrite | CatAdmin | CatDangerous | CatConnection | CatKeyspace | CatString | CatFast | CatSlow | CatHash | CatSet | CatTransaction
 )
 
 var categoryNames = []struct {
@@ -46,7 +55,8 @@ var categoryNames = []struct {
 }{
 	{"read", CatRead}, {"write", CatWrite}, {"admin", CatAdmin}, {"dangerous", CatDangerous},
 	{"connection", CatConnection}, {"keyspace", CatKeyspace}, {"string", CatString},
-	{"fast", CatFast}, {"slow", CatSlow}, {"all", CatAll},
+	{"fast", CatFast}, {"slow", CatSlow}, {"hash", CatHash}, {"set", CatSet}, {"transaction", CatTransaction},
+	{"all", CatAll},
 }
 
 // ParseCategory returns the category that has the name, without the @ sign and

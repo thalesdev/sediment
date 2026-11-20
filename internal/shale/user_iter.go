@@ -35,6 +35,7 @@ type userIter struct {
 	err    error
 	lookup []byte
 	last   []byte
+	cover  []*tombIndex
 }
 
 // NewIterator returns an iterator over the keys of the DB, in ascending order,
@@ -62,9 +63,15 @@ func newUserIter(db *DB, state *readState, seq uint64, opts *IterOptions) *userI
 	for _, m := range []*memtable{state.mem, state.imm} {
 		if m != nil {
 			sources = append(sources, m.list.NewIterator())
+			if idx := m.cover(); idx != nil {
+				it.cover = append(it.cover, idx)
+			}
 		}
 	}
 	for _, t := range state.tables {
+		if t.tombIdx != nil {
+			it.cover = append(it.cover, t.tombIdx)
+		}
 		if it.outside(ikey.UserKey(t.meta.Smallest), ikey.UserKey(t.meta.Largest)) {
 			continue
 		}
@@ -170,7 +177,7 @@ func (it *userIter) settle() {
 			it.src.Next()
 			continue
 		}
-		if kind == ikey.KindDelete {
+		if kind == ikey.KindDelete || it.hidden(user, seq) {
 			it.last = append(it.last[:0], user...)
 			it.skipUser()
 			continue
@@ -181,6 +188,17 @@ func (it *userIter) settle() {
 	if err := it.src.Err(); err != nil {
 		it.err = err
 	}
+}
+
+// hidden tells if a range delete that the iterator sees covers a version of user
+// with the sequence number seq, which is the newest one that it sees.
+func (it *userIter) hidden(user []byte, seq uint64) bool {
+	for _, c := range it.cover {
+		if c.maxCover(user, it.seq) > seq {
+			return true
+		}
+	}
+	return false
 }
 
 // Valid returns true if the iterator is at a key.

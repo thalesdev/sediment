@@ -2,16 +2,20 @@
 
 package shale
 
-import "github.com/thalesdev/sediment/internal/ikey"
+import (
+	"bytes"
+
+	"github.com/thalesdev/sediment/internal/batch"
+)
 
 // batchOp is one operation of a Batch.
 type batchOp struct {
-	kind  ikey.Kind
+	kind  batch.Kind
 	key   []byte
 	value []byte
 }
 
-// Batch is a list of Put and Delete operations that DB.Write applies as one
+// Batch is a list of Put, Delete and DeleteRange operations that DB.Write applies as one
 // unit. The zero value is an empty batch. A Batch keeps the slices that the
 // caller gives it, so the caller must not change them until Write returns. It is
 // not safe for concurrent use.
@@ -21,12 +25,33 @@ type Batch struct {
 
 // Put adds an operation that sets the value of key.
 func (b *Batch) Put(key, value []byte) {
-	b.ops = append(b.ops, batchOp{kind: ikey.KindPut, key: key, value: value})
+	b.ops = append(b.ops, batchOp{kind: batch.KindPut, key: key, value: value})
 }
 
 // Delete adds an operation that deletes key.
 func (b *Batch) Delete(key []byte) {
-	b.ops = append(b.ops, batchOp{kind: ikey.KindDelete, key: key})
+	b.ops = append(b.ops, batchOp{kind: batch.KindDelete, key: key})
+}
+
+// DeleteRange adds an operation that deletes every key from start up to, and not
+// including, end. It deletes the keys that exist when the batch is applied, and
+// the puts of the same batch that come before it, and not the ones that come
+// after it. A range that is empty or inverted deletes nothing, and the batch does
+// not keep it.
+func (b *Batch) DeleteRange(start, end []byte) {
+	if bytes.Compare(start, end) >= 0 {
+		return
+	}
+	b.ops = append(b.ops, batchOp{kind: batch.KindRangeDelete, key: start, value: end})
+}
+
+// Each calls fn for each operation of the batch, in order. For a range delete, key
+// is the start and value is the end of the range. The slices are the ones that the
+// caller gave to the batch.
+func (b *Batch) Each(fn func(kind batch.Kind, key, value []byte)) {
+	for _, op := range b.ops {
+		fn(op.kind, op.key, op.value)
+	}
 }
 
 // Len returns the number of operations in the batch.

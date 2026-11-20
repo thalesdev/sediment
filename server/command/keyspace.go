@@ -4,7 +4,6 @@ package command
 
 import (
 	"bytes"
-	"encoding/binary"
 	"math/rand/v2"
 	"strconv"
 	"strings"
@@ -64,14 +63,17 @@ func (s *scanState) lookup(id uint64) ([]byte, bool) {
 	return key, ok
 }
 
-// patternBounds returns the range of keys that a pattern can match. A pattern
-// that starts with plain bytes only matches keys that start with them.
-func patternBounds(pattern []byte) *shale.IterOptions {
-	prefix := globPrefix(pattern)
-	if len(prefix) == 0 {
-		return nil
+// entryOf decodes the current entry of an iterator over the KEY records. It
+// returns the user key, which is a slice of the key of the iterator, the record,
+// and whether the key is alive at the time now, in milliseconds.
+func entryOf(it shale.Iterator, now int64) (user []byte, rec record, live bool, err error) {
+	if user, err = userKeyOf(it.Key()); err != nil {
+		return nil, record{}, false, err
 	}
-	return &shale.IterOptions{Lower: prefix, Upper: prefixEnd(prefix)}
+	if rec, err = decodeRecord(it.Value()); err != nil {
+		return nil, record{}, false, err
+	}
+	return user, rec, rec.deadline == 0 || rec.deadline > now, nil
 }
 
 // matchAll tells if a pattern matches every key.
@@ -89,7 +91,7 @@ func scan(env *Env, c *Client, args [][]byte) resp.Value {
 	}
 	count := defaultScanCount
 	pattern := []byte("*")
-	allTypes := true
+	wantType := ""
 	opts := args[2:]
 	if len(opts)%2 != 0 {
 		return replySyntax
@@ -112,7 +114,7 @@ func scan(env *Env, c *Client, args [][]byte) resp.Value {
 				count = int(n)
 			}
 		case "TYPE":
-			allTypes = strings.EqualFold(string(opts[i+1]), "string")
+			wantType = strings.ToLower(string(opts[i+1]))
 		default:
 			return replySyntax
 		}
@@ -124,10 +126,7 @@ func scan(env *Env, c *Client, args [][]byte) resp.Value {
 			return replyBadCursor
 		}
 	}
-	if !allTypes {
-		return scanReply("0", nil)
-	}
-	it, err := env.Store.NewIterator(patternBounds(pattern))
+	it, err := env.Store.NewIterator(classBounds(classKey))
 	if err != nil {
 		return env.storageError("scan", err)
 	}
@@ -145,19 +144,18 @@ func scan(env *Env, c *Client, args [][]byte) resp.Value {
 	var last []byte
 	total, examined := 0, 0
 	for it.Valid() && examined < count {
-		key := it.Key()
-		live, err := isLive(it.Value(), now)
+		user, rec, live, err := entryOf(it, now)
 		if err != nil {
 			return env.storageError("scan", err)
 		}
-		if live && (matchAll(pattern) || globMatch(pattern, key)) {
-			if env.MaxReply > 0 && total+len(key) > env.MaxReply && len(page) > 0 {
+		if live && (wantType == "" || rec.typ.name() == wantType) && (matchAll(pattern) || globMatch(pattern, user)) {
+			if env.MaxReply > 0 && total+len(user) > env.MaxReply && len(page) > 0 {
 				break
 			}
-			total += len(key)
-			page = append(page, resp.Bulk(bytes.Clone(key)))
+			total += len(user)
+			page = append(page, resp.Bulk(bytes.Clone(user)))
 		}
-		last = append(last[:0], key...)
+		last = append(last[:0], it.Key()...)
 		examined++
 		it.Next()
 	}
@@ -180,7 +178,7 @@ func scanReply(cursor string, page []resp.Value) resp.Value {
 // database.
 func keysCmd(env *Env, _ *Client, args [][]byte) resp.Value {
 	pattern := args[1]
-	it, err := env.Store.NewIterator(patternBounds(pattern))
+	it, err := env.Store.NewIterator(classBounds(classKey))
 	if err != nil {
 		return env.storageError("keys", err)
 	}
@@ -189,19 +187,18 @@ func keysCmd(env *Env, _ *Client, args [][]byte) resp.Value {
 	var out []resp.Value
 	total := 0
 	for it.SeekToFirst(); it.Valid(); it.Next() {
-		live, err := isLive(it.Value(), now)
+		user, _, live, err := entryOf(it, now)
 		if err != nil {
 			return env.storageError("keys", err)
 		}
-		key := it.Key()
-		if !live || !(matchAll(pattern) || globMatch(pattern, key)) {
+		if !live || !(matchAll(pattern) || globMatch(pattern, user)) {
 			continue
 		}
-		total += len(key)
+		total += len(user)
 		if env.MaxReply > 0 && total > env.MaxReply {
 			return replyReplyBig
 		}
-		out = append(out, resp.Bulk(bytes.Clone(key)))
+		out = append(out, resp.Bulk(bytes.Clone(user)))
 	}
 	if err := it.Err(); err != nil {
 		return env.storageError("keys", err)
@@ -212,7 +209,7 @@ func keysCmd(env *Env, _ *Client, args [][]byte) resp.Value {
 // dbsize is DBSIZE. It counts the keys that are alive, so it is slow on a large
 // database.
 func dbsize(env *Env, _ *Client, _ [][]byte) resp.Value {
-	it, err := env.Store.NewIterator(nil)
+	it, err := env.Store.NewIterator(classBounds(classKey))
 	if err != nil {
 		return env.storageError("dbsize", err)
 	}
@@ -220,7 +217,7 @@ func dbsize(env *Env, _ *Client, _ [][]byte) resp.Value {
 	now := env.nowMillis()
 	var n int64
 	for it.SeekToFirst(); it.Valid(); it.Next() {
-		live, err := isLive(it.Value(), now)
+		_, _, live, err := entryOf(it, now)
 		if err != nil {
 			return env.storageError("dbsize", err)
 		}
@@ -234,14 +231,14 @@ func dbsize(env *Env, _ *Client, _ [][]byte) resp.Value {
 	return resp.Integer(n)
 }
 
-// randomkey is RANDOMKEY. It picks a random point in the key space and takes the
-// first live key after it, and it wraps around once. A key that follows a large
-// gap is more likely, so the choice is not uniform.
+// randomkey is RANDOMKEY. It picks a random slot and takes the first live key
+// after it, and it wraps around once. A slot that follows a large gap is more
+// likely, so the choice is not uniform.
 func randomkey(env *Env, _ *Client, _ [][]byte) resp.Value {
-	var point [8]byte
-	binary.BigEndian.PutUint64(point[:], rand.Uint64())
+	point := engineKey(classKey, uint16(rand.IntN(slotCount)))
 	now := env.nowMillis()
-	for _, opts := range []*shale.IterOptions{{Lower: point[:]}, {Upper: point[:]}} {
+	end := []byte{classKey + 1}
+	for _, opts := range []*shale.IterOptions{{Lower: point, Upper: end}, {Lower: []byte{classKey}, Upper: point}} {
 		key, ok, err := firstLive(env, opts, now)
 		if err != nil {
 			return env.storageError("randomkey", err)
@@ -253,7 +250,8 @@ func randomkey(env *Env, _ *Client, _ [][]byte) resp.Value {
 	return resp.Null()
 }
 
-// firstLive returns a copy of the first key in the range that is alive.
+// firstLive returns a copy of the user key of the first key in the range that is
+// alive.
 func firstLive(env *Env, opts *shale.IterOptions, now int64) ([]byte, bool, error) {
 	it, err := env.Store.NewIterator(opts)
 	if err != nil {
@@ -261,28 +259,28 @@ func firstLive(env *Env, opts *shale.IterOptions, now int64) ([]byte, bool, erro
 	}
 	defer it.Close()
 	for it.SeekToFirst(); it.Valid(); it.Next() {
-		live, err := isLive(it.Value(), now)
+		user, _, live, err := entryOf(it, now)
 		if err != nil {
 			return nil, false, err
 		}
 		if live {
-			return bytes.Clone(it.Key()), true, nil
+			return bytes.Clone(user), true, nil
 		}
 	}
 	return nil, false, it.Err()
 }
 
-// typeCmd is TYPE key. Every value is a string.
+// typeCmd is TYPE key.
 func typeCmd(env *Env, _ *Client, args [][]byte) resp.Value {
 	if bad, ok := env.checkKey(args[1]); !ok {
 		return bad
 	}
-	_, _, err := env.load(args[1])
+	rec, err := env.loadRecord(args[1])
 	if isNotFound(err) {
 		return resp.Simple("none")
 	}
 	if err != nil {
 		return env.storageError("type", err)
 	}
-	return resp.Simple("string")
+	return resp.Simple(rec.typ.name())
 }

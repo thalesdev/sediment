@@ -32,7 +32,7 @@ that had returned survives a `kill -9`.
 |---|---|
 | Shale, the storage engine | Done: write-ahead log, memtable (a skiplist without a lock), SSTables, block cache, MANIFEST, compaction, group commit, atomic batches |
 | `resp`, the protocol | Done: RESP2 and RESP3, fuzzed, with limits on every size |
-| `sedimentd`, the RESP server | Done for strings: `GET`, `SET`, `DEL`, `EXISTS`, `MGET`, `MSET`, counters (`INCR`, `DECR`, `APPEND`, `GETDEL` and more), key expiry (`SET EX`, `EXPIRE`, `TTL`, `PERSIST`), `SCAN`, `KEYS`, pipelining, `HELLO 3` |
+| `sedimentd`, the RESP server | Done for strings, hashes and sets: the string and counter commands, key expiry (`SET EX`, `EXPIRE`, `TTL`, `PERSIST`), `HSET` and the hash commands, `SADD` and the set commands, `MULTI`, `EXEC` and `WATCH`, `SCAN` and `KEYS`, `RENAME`, `BGSAVE`, pipelining, `HELLO 3` |
 | Security | TLS 1.3 and mTLS, users with an ACL file, safe defaults. Key patterns and run-time `ACL SETUSER` come later |
 | Public Go API | Not yet: Shale lives in `internal/shale` until the server shapes it |
 
@@ -109,8 +109,13 @@ A command goes through the server before it reaches the engine:
  command check     unknown command, number of arguments, AUTH, then the ACL
    |               (categories such as @read, @write and @dangerous)
    v
- command layer     size of the key, lock per key for a read-modify-write,
-   |               TTL tag of the value, limit on the size of a reply
+ MULTI queue       between MULTI and EXEC a command waits here, with limits on
+   |               the commands and the bytes. EXEC locks the keys of the queue,
+   |               checks the WATCH, and runs the commands in order
+   v
+ command layer     size of the key, lock per key for a read-modify-write, the
+   |               engine key and the typed value (string, hash, set), a deadline
+   |               that EXPIRE sets, limit on the size of a reply
    v
  Shale             the engine, below
 ```
@@ -130,7 +135,8 @@ Inside Shale a write is a sequence, and a read looks at a few places:
                 2. write-ahead log                                ^
                    (one record per group)                    block cache
                           |                                  (the file, on a miss)
-                3. memtable (skip list)
+                3. memtable (skip list, and the list of
+                   range deletes of DeleteRange)
                           |
                 4. last sequence number published, the write returns
 
@@ -138,6 +144,12 @@ Inside Shale a write is a sequence, and a read looks at a few places:
                SSTables --size-tiered compaction--> fewer SSTables, with the old
                versions of a key and the expired keys dropped
 ```
+
+The server keeps each key as a record with a class and a hash slot, and a hash or a
+set as one record for the key and one for each field, named by an id that is never
+used again. `DEL` of a hash of any size is one `DeleteRange` of its fields, which is
+a record of the log and not one write for each field. The key layout is in
+`server/command/keyenc.go`.
 
 A snapshot and an iterator read a view that does not change while they run. `SCAN`,
 `KEYS`, `DBSIZE` and `RANDOMKEY` open an iterator, read, and close it inside one command:
