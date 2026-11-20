@@ -69,6 +69,10 @@ func New(o Options) (*Server, error) {
 	if l := newAuthLimit(o.AuthFailLimit, o.AuthFailWindow, nil); l != nil {
 		limit = l
 	}
+	var health func() error
+	if h, ok := o.Store.(interface{ Err() error }); ok {
+		health = h.Err
+	}
 	versions := command.NewVersions()
 	s.env = &command.Env{
 		Store:           command.WithVersions(o.Store, versions),
@@ -91,6 +95,7 @@ func New(o Options) (*Server, error) {
 		AuthDelayMax:    o.AuthDelayMax,
 		MaxAuthFailures: o.MaxAuthFailures,
 		AuthLimit:       limit,
+		Health:          health,
 	}
 	return s, nil
 }

@@ -34,6 +34,12 @@ func (s *Server) Info(section string) string {
 		line("os", runtime.GOOS+" "+runtime.GOARCH)
 		line("go_version", runtime.Version())
 		line("uptime_in_seconds", num(uint64(time.Since(s.started).Seconds())))
+		line("loading", "0")
+		health := "ok"
+		if s.env.Health != nil && s.env.Health() != nil {
+			health = "failed"
+		}
+		line("storage", health)
 		b.WriteString("\r\n")
 	}
 	if want("clients") {

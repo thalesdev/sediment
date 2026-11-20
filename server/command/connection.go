@@ -26,7 +26,12 @@ func connectionCommands() []*Spec {
 }
 
 // ping is PING [message].
-func ping(_ *Env, _ *Client, args [][]byte) resp.Value {
+func ping(env *Env, _ *Client, args [][]byte) resp.Value {
+	if env.Health != nil {
+		if err := env.Health(); err != nil {
+			return resp.Error("MISCONF the database stopped after an error and refuses writes, see the log of the server")
+		}
+	}
 	switch len(args) {
 	case 1:
 		return resp.Simple("PONG")

@@ -129,3 +129,17 @@ func text(v resp.Value) string {
 	}
 	return string(v.Bytes)
 }
+
+func listenLocal(t *testing.T) net.Listener {
+	t.Helper()
+	return listenLocalOn(t, "127.0.0.1:0")
+}
+
+func listenLocalOn(t *testing.T, addr string) net.Listener {
+	t.Helper()
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
+}

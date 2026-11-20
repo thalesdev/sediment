@@ -231,6 +231,10 @@ type Env struct {
 	// connection is closed.
 	MaxAuthFailures int
 
+	// Health returns the error that stopped the storage, or nil. It can be nil,
+	// and then the storage is always healthy.
+	Health func() error
+
 	// AuthLimit limits the failed sign ins of each address. It can be nil, and
 	// then there is no limit by address.
 	AuthLimit AuthLimiter

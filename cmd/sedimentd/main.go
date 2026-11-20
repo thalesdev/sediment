@@ -5,10 +5,17 @@
 //
 //	sedimentd [-config file] [-dir dir] [-bind address] [-port port] [-aclfile file]
 //	sedimentd hash-password
+//	sedimentd healthcheck [-config file] [-bind address] [-port port]
 //
 // The second form reads a password from standard input, without the final line
 // break, and prints its hash for the ACL file. The password never goes in an
 // argument, because arguments show in the process list.
+//
+// The third form sends PING to the server and exits with 0 if the server can serve,
+// and with 1 if it cannot. It is for the HEALTHCHECK of a container and the exec probe
+// of Kubernetes, which have no redis-cli. If the server needs a sign in, the user
+// and the password come from the environment variables SEDIMENT_HEALTHCHECK_USER and
+// SEDIMENT_HEALTHCHECK_PASSWORD.
 //
 // The server listens on 127.0.0.1 only, with no TLS and no users, unless the
 // settings say otherwise. It refuses to listen on an address that other machines
@@ -185,6 +192,26 @@ func reloadLevel(path string, level *slog.LevelVar) error {
 	return nil
 }
 
+// listenAll opens a listener for each bind address of the config, wrapped for TLS
+// if tlsCfg is not nil. If one fails, it closes the ones that it opened.
+func listenAll(cfg config.Config, tlsCfg *tls.Config) ([]net.Listener, error) {
+	var listeners []net.Listener
+	for _, b := range cfg.Bind {
+		l, err := net.Listen("tcp", net.JoinHostPort(b, strconv.Itoa(cfg.Port)))
+		if err != nil {
+			for _, open := range listeners {
+				_ = open.Close()
+			}
+			return nil, err
+		}
+		if tlsCfg != nil {
+			l = server.TLSListener(l, tlsCfg)
+		}
+		listeners = append(listeners, l)
+	}
+	return listeners, nil
+}
+
 // slowLogThreshold converts the slowlog-log-slower-than setting, in microseconds,
 // to the option of the server. 0 logs every command, which is a time of 1 ns.
 func slowLogThreshold(us int) time.Duration {
@@ -234,6 +261,9 @@ func hashPassword(in io.Reader, out io.Writer) error {
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 1 && args[0] == "hash-password" {
 		return hashPassword(stdin, stdout)
+	}
+	if len(args) >= 1 && args[0] == "healthcheck" {
+		return healthcheck(args[1:], stderr, os.Getenv)
 	}
 	cfg, cfgPath, showVersion, err := loadConfig(args, stderr)
 	if err != nil {
@@ -303,6 +333,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		}
 	}()
 
+	loading := server.NewLoading()
+	stopLoading := sync.OnceFunc(loading.Close)
+	defer stopLoading()
+	early, err := listenAll(cfg, tlsCfg)
+	if err != nil {
+		return err
+	}
+	for _, l := range early {
+		go func() { _ = loading.Serve(l) }()
+	}
+
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return err
 	}
@@ -347,20 +388,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	var listeners []net.Listener
-	for _, b := range cfg.Bind {
-		l, err := net.Listen("tcp", net.JoinHostPort(b, strconv.Itoa(cfg.Port)))
-		if err != nil {
-			for _, open := range listeners {
-				_ = open.Close()
-			}
-			return err
-		}
-		listeners = append(listeners, l)
+	stopLoading()
+	listeners, err := listenAll(cfg, tlsCfg)
+	if err != nil {
+		return err
+	}
+	for _, l := range listeners {
 		log.Info("listening", "addr", l.Addr().String(), "tls", tlsCfg != nil, "mtls", cfg.TLSCA != "", "users", access != nil, "version", version)
-		if tlsCfg != nil {
-			listeners[len(listeners)-1] = server.TLSListener(l, tlsCfg)
-		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

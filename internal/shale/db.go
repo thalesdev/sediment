@@ -321,3 +321,11 @@ func (db *DB) fail(part string, err error) error {
 	db.cond.Broadcast()
 	return db.err
 }
+
+// Err returns the error that stopped the DB, or nil if the DB works. After an error
+// the DB refuses every write. It is the signal for a health check.
+func (db *DB) Err() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return db.err
+}
