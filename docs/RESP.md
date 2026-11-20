@@ -54,18 +54,18 @@ closes the connection, so that a web page cannot talk to the server.
 | `EXISTS` | [x] | |
 | `MGET` | [x] | The reply has a size limit. |
 | `MSET` | [x] | One atomic write. |
-| `PING`, `ECHO`, `QUIT` | [x] | |
+| `PING`, `ECHO`, `QUIT` | [x] | `PING` answers `-MISCONF` if the storage stopped after an error, and `-LOADING` while the node opens its data. `sedimentd healthcheck` uses it. |
 | `SELECT` | [x] | Only database 0. |
 | `HELLO` | [x] | `AUTH` and `SETNAME` options. |
 | `AUTH` | [x] | `AUTH password` and `AUTH user password`. |
-| `CLIENT` | [x] | `ID`, `SETNAME`, `GETNAME`, `SETINFO`, `INFO`. |
-| `CLIENT LIST`, `KILL`, `PAUSE`, `TRACKING` | [ ] | |
+| `CLIENT` | [x] | `ID`, `SETNAME`, `GETNAME`, `SETINFO`, `INFO`, `LIST` (with `ID` and `TYPE normal`) and `KILL` (the old form with an address, and `ID`, `ADDR`, `LADDR`, `USER`, `SKIPME`). `LIST` and `KILL` need `@admin` and `@dangerous`. |
+| `CLIENT PAUSE`, `TRACKING` | [ ] | |
+| `SLOWLOG` | [x] | `GET [count]`, `LEN`, `RESET`. An entry has the name of the command and the number of its arguments, never an argument. See `slowlog-log-slower-than` and `slowlog-max-len`. |
 | `COMMAND` | [x] | `COUNT`, `LIST`, `INFO`, `DOCS` (empty). |
-| `INFO` | [x] | Sections `server`, `clients`, `stats`, `persistence`, `shale`, `runtime`. |
+| `INFO` | [x] | Sections `server` (with `loading` and `storage`), `clients`, `stats`, `cpu`, `persistence`, `shale`, `runtime`. While the node opens its data, `INFO` shows `loading:1` and every other command gets a `LOADING` error. |
 | `CONFIG GET` | [x] | Read only, no file names. |
 | `CONFIG SET`, `REWRITE` | [ ] | On purpose. See [SECURITY.md](../SECURITY.md). |
-| `ACL WHOAMI`, `USERS`, `LIST`, `LOAD`, `CAT` | [x] | Only for users with `@admin`. |
-| `ACL SETUSER`, `DELUSER`, `SAVE`, `GETUSER`, `LOG` | [ ] | ACL phase 2. |
+| `ACL WHOAMI`, `USERS`, `LIST`, `LOAD`, `CAT`, `SETUSER`, `DELUSER`, `GETUSER`, `SAVE`, `LOG` | [x] | Only for users with `@admin`. `SETUSER` changes a user whole or not at all. `DELUSER` never removes `default`. `SAVE` writes the file with mode 600. `LOG` keeps 128 entries and never a key. A change of the users closes the connections of a user that is gone or off. |
 | `INCR`, `DECR`, `INCRBY`, `DECRBY` | [x] | Atomic. Overflow is an error. |
 | `APPEND`, `STRLEN` | [x] | A string is limited to 16 MiB. |
 | `SETNX`, `GETSET`, `GETDEL` | [x] | Atomic. |
@@ -103,11 +103,12 @@ The users are in a file with the line format of the Redis ACL file.
 | `sedimentd hash-password` makes the `$pbkdf2-sha256$` hash from a password on standard input | [x] |
 | `+@category`, `-@category`, `+command`, `-command`, `allcommands`, `nocommands` | [x] |
 | `~*` and `allkeys` | [x] |
-| Key patterns (`~prefix:*`, `%R~`, `%W~`) | [ ] The file is refused, it is not ignored. |
-| Rules for subcommands (`+config\|get`) | [ ] The file is refused. |
-| `ACL SETUSER` at run time, `ACL SAVE`, `ACL LOG`, selectors | [ ] |
+| Key patterns (`~prefix:*`, `%R~`, `%W~`, `%RW~`, `resetkeys`) | [x] A user with no pattern reaches no key. `KEYS`, `SCAN` and `RANDOMKEY` need the right to read every key. |
+| Rules for subcommands (`+config\|get`, `-client\|kill`) | [x] An unknown subcommand is an error. |
+| Selectors `(~app:* +get)` and `clearselectors` | [x] A selector is a second set of rules, and a command is allowed if any set allows it. |
+| `ACL SETUSER`, `DELUSER`, `GETUSER`, `SAVE`, `LOG` at run time | [x] |
 | Channel patterns | [ ] Accepted, there are no channels yet. |
-| User from the CN of a client certificate | [ ] |
+| User from the CN of a client certificate (`certonly`, `tls-auth-clients-user yes`) | [x] Only for a user with the rule `certonly`, which can not sign in with a password. |
 
 ## Limits
 
@@ -133,5 +134,6 @@ in gets the smaller pre-sign-in limits.
 | Time to take a reply | 30 s | |
 | TLS handshake | 10 s | |
 | Failed sign ins before the close | 5, each one waits longer | |
+| Failed sign ins of one address (`auth-fail-limit`, `auth-fail-window`) | 20 in 60 s, then the address is refused | |
 | Cache of data blocks (`block-cache-size`) | 64 MiB | |
 | Memtable (`memtable-size`) | 64 MiB, at most 1 GiB | |

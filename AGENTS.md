@@ -9,13 +9,16 @@ sediment is a key-value database that speaks RESP (the Redis protocol). It is
 built on Shale, an LSM storage engine in `internal/shale`. The RESP server is in
 `server`, with the protocol in `resp` and the commands in `server/command`. See [README.md](README.md) and [ROADMAP.md](ROADMAP.md).
 
-The module is `github.com/thalesdev/sediment`. The folder `compat` is a separate
-module with the compatibility tests and benchmarks against goleveldb.
+The module is `github.com/thalesdev/sediment`. The folders `compat` and
+`cmd/sedimentd` are separate modules. `compat` has the compatibility tests and
+benchmarks against goleveldb. `cmd/sedimentd` links the OpenTelemetry SDK, the
+exporters and the Prometheus client, so that the main module imports only the
+OpenTelemetry API.
 
 ## Commands
 
 ```bash
-make check       # gofmt and vet, both modules
+make check       # gofmt and vet, the three modules
 make test        # fast tests (-short), seconds
 make race        # fast tests with the race detector
 make full        # everything: check, all tests, race, compat, fuzz (minutes)
@@ -65,6 +68,17 @@ change the code near them.
 - A write returns only after its record is in the log (and flushed, with
   `Options.Sync`). The memtable is updated after the log, and the sequence number
   is published last.
+- The engine and the server import only the OpenTelemetry API (`otel`,
+  `otel/metric`, `otel/trace`). The SDK, the exporters and anything else that
+  costs a library user stay in `cmd/sedimentd`. A `Meter`, a `Tracer` and a
+  `Logger` that is nil mean no work at all.
+- A log line, a metric attribute, a span attribute and a slow log entry never
+  hold a key, a value, an argument or a password. A command is timed in one place,
+  `Server.observe`, which every command passes, and a change there is measured
+  with `make bench-inproc` and `benchstat`.
+- An ACL check goes through `Env.Check`, with the keys of the command from
+  `command.KeysOf`. A path that runs a command without `execute` (the batch of
+  `SET`, `EXEC`) checks the keys too.
 - Every engine key of the server goes through `server/command/keyenc.go`, and every value through its record codec. A command never builds a key by hand.
 - A command takes the lock of a key through the client (`cl.lock`), and never through `env.Locks`. `EXEC` holds the locks, and they are not reentrant.
 - A range delete has a sequence number, and it hides a version of a key only if that number is above the one of the version. A source that has a range delete and no version of the key hides the key in every older source, because the sequence ranges of the tables do not overlap.
@@ -78,7 +92,9 @@ change the code near them.
 | `internal/shale` | The engine: `DB`, snapshots, iterators, recovery, flush, compaction, group commit |
 | `resp`, `server`, `server/command`, `server/acl` | The protocol, the connections, the commands and the users |
 | `internal/wal`, `sstable`, `bloom`, `skiplist`, `merge`, `manifest`, `batch`, `ikey` | The parts, one package each |
-| `compat` | goleveldb tests and the twin benchmarks |
+| `compat` | goleveldb tests and the twin benchmarks (separate module) |
+| `cmd/sedimentd` | The server program, with the OpenTelemetry SDK and the exporters (separate module) |
+| `internal/glob` | The glob matcher of key patterns and `KEYS` |
 
 The server keeps its keys in the layout of `server/command/keyenc.go`, and a change of that layout is a change of a file format.
 

@@ -76,3 +76,14 @@ func TestHealth(t *testing.T) {
 		again.Close()
 	})
 }
+
+func TestInfoCPU(t *testing.T) {
+	t.Run("Should show the CPU time of the process", func(t *testing.T) {
+		_, addr := startServer(t, Options{})
+		c := dial(t, addr)
+		got := text(c.do("INFO", "cpu"))
+		if !strings.Contains(got, "used_cpu_user:") || !strings.Contains(got, "used_cpu_sys:") {
+			t.Fatalf("got %q", got)
+		}
+	})
+}

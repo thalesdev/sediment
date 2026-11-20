@@ -105,3 +105,26 @@ jobs:
           files: coverage.out
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  image:
+    name: container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: sediment:ci
+      - name: the image starts and passes its health check
+        run: |
+          docker run -d --name sediment -p 127.0.0.1:6379:6379 sediment:ci
+          for i in $(seq 1 30); do
+            status="$(docker inspect --format '{{.State.Health.Status}}' sediment)"
+            [ "$status" = healthy ] && exit 0
+            sleep 2
+          done
+          docker logs sediment
+          exit 1

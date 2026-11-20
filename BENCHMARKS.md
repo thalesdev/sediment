@@ -644,3 +644,44 @@ network, which is what a client sees, the difference is inside the noise. The in
 `GET` of a table is too noisy to give a number (2.3 us before, 2.7 to 4.1 us after).
 Not tried, because the rule is to measure before an optimization: a stack buffer for the
 key, which the `Store` interface would still make escape, and a slot table.
+
+### Milestone 2: the cost of the timing, and the first numbers on Linux
+
+**The timing of each command.** Every command passes one place, `Server.observe`, where it
+is timed for the slow log, the metrics and the traces. `BenchmarkInprocGetNopStore` and
+`BenchmarkInprocSetNopStore` (the server layer with no network and no engine, 10 runs, Apple
+M3 Pro, `benchstat`) before and after the slow log, the time of the last command of a client
+and the sign in checks:
+
+| Benchmark | Before | After |
+|---|---|---|
+| `GET`, server layer only | 238 ns | 287 ns (+21%) |
+| `SET`, server layer only | 371 ns | 397 ns (+7%) |
+
+The allocations did not change (6 and 9). The two calls of `time.Now` are the cost, and the
+metrics and the traces need the same time, so they add none. With no `Meter` and no `Tracer`
+the server keeps nothing more. Through the network the 50 ns are inside the noise.
+
+**CPU per command in a container with one CPU, on Linux.** `scripts/measure-linux.sh`
+runs the image of `make docker` with `--cpus=1`, and drives it with `redis-benchmark` of the
+image `redis:7-alpine` in the network of the server container, 50 clients, 100 byte values,
+100,000 keys, 500,000 requests. The CPU is the user plus system time of the server (`INFO cpu`),
+divided by the number of requests.
+
+| Workload | 2 Ps: requests/s | 2 Ps: us of CPU | 1 P: requests/s | 1 P: us of CPU |
+|---|---|---|---|---|
+| `SET` | 133,000 | 7.4 | 143,000 | 6.8 |
+| `GET` | 165,000 | 6.0 | 174,000 | 5.7 |
+| `SET`, pipeline 16 | 440,000 | 2.3 | 363,000 | 2.7 |
+| `GET`, pipeline 16 | 498,000 | 2.1 | 403,000 | 2.5 |
+| `SET`, pipeline 64 | 538,000 | 1.9 | 480,000 | 2.1 |
+
+Two things the numbers do not say. The Go runtime sets `GOMAXPROCS` from the limit of the
+container but never below 2, so a limit of 1 CPU runs with 2 Ps (the first four columns) unless
+`GOMAXPROCS=1` says otherwise. And this is a Linux virtual machine of a laptop, with 2 vCPUs
+that the load generator shares with the server, on an arm64 Apple M3 Pro. It shows that the
+script and the image work and the order of the cost, which is 6 to 7 us of CPU for a `SET` or
+a `GET` with no pipeline, and 2 us with a pipeline of 16 or more, as on macOS in
+[Per core](#per-core-sediment-spends-3-to-6-times-the-cpu-of-redis-per-command). It is not a number
+for a real deployment: run the script on the machine and the limit of the deployment before
+you say one.

@@ -1,6 +1,8 @@
 GO ?= go
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+PLATFORMS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
-.PHONY: all build test race full test-full race-full fuzz cover bench bench-compare bench-server bench-inproc vuln fmt fmt-check vet check compat tidy clean help
+.PHONY: dist docker all build test race full test-full race-full fuzz cover bench bench-compare bench-server bench-inproc vuln fmt fmt-check vet check compat tidy clean help
 
 FUZZTIME ?= 10s
 BENCHCOUNT ?= 1
@@ -87,6 +89,22 @@ tidy: ## go mod tidy on the three modules
 	$(GO) mod tidy
 	cd compat && $(GO) mod tidy
 	cd cmd/sedimentd && $(GO) mod tidy
+
+dist: ## release builds of sedimentd for Linux and macOS in dist/ (VERSION, PLATFORMS)
+	rm -rf dist
+	mkdir -p dist
+	@set -e; for p in $(PLATFORMS); do \
+		os=$${p%/*}; arch=$${p#*/}; name=sedimentd_$(VERSION)_$${os}_$${arch}; \
+		mkdir -p dist/$$name; \
+		(cd cmd/sedimentd && CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ../../dist/$$name/sedimentd .); \
+		cp LICENSE README.md SECURITY.md dist/$$name/; \
+		tar -C dist -czf dist/$$name.tar.gz $$name; \
+		rm -r dist/$$name; \
+	done
+	cd dist && (sha256sum *.tar.gz 2>/dev/null || shasum -a 256 *.tar.gz) > SHA256SUMS
+
+docker: ## container image sediment:VERSION
+	docker build -t sediment:$(VERSION) --build-arg VERSION=$(VERSION) .
 
 clean:
 	rm -f coverage.out

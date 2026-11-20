@@ -101,6 +101,14 @@ func (s *Server) Info(section string) string {
 		line("block_cache_bytes", strconv.Itoa(m.BlockCacheBytes))
 		b.WriteString("\r\n")
 	}
+	if want("cpu") {
+		if user, system, ok := cpuTimes(); ok {
+			b.WriteString("# CPU\r\n")
+			line("used_cpu_sys", strconv.FormatFloat(system, 'f', 6, 64))
+			line("used_cpu_user", strconv.FormatFloat(user, 'f', 6, 64))
+			b.WriteString("\r\n")
+		}
+	}
 	if want("runtime") {
 		b.WriteString("# Runtime\r\n")
 		for _, kv := range runtimeInfo() {
