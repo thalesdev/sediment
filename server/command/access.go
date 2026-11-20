@@ -33,6 +33,9 @@ func (e *Env) Check(user string, spec *Spec, args [][]byte) string {
 	if spec.ListsKeys && !e.Access.AllKeysReadable(user) {
 		return "key"
 	}
+	if spec.WritesAllKeys && !e.Access.AllKeysWritable(user) {
+		return "key"
+	}
 	return ""
 }
 

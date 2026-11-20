@@ -41,6 +41,10 @@ type Spec struct {
 	// argument names one. An ACL rule can allow or deny a single subcommand.
 	Subs []string
 
+	// WritesAllKeys is true for a command that changes every key without naming
+	// them, such as FLUSHALL. A user can run it only if it can write every key.
+	WritesAllKeys bool
+
 	// ListsKeys is true for a command that returns key names that it does not take
 	// as arguments, such as KEYS. A user can run it only if it can read every key.
 	ListsKeys bool
@@ -98,6 +102,9 @@ type Access interface {
 
 	// AllKeysReadable reports whether the user can read every key.
 	AllKeysReadable(user string) bool
+
+	// AllKeysWritable reports whether the user can write every key.
+	AllKeysWritable(user string) bool
 
 	// Active reports whether the user exists and is on.
 	Active(user string) bool
@@ -353,7 +360,7 @@ func (r *Registry) Specs() []*Spec {
 // NewRegistry returns a registry with all the commands of the server.
 func NewRegistry() *Registry {
 	r := &Registry{specs: make(map[string]*Spec)}
-	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), moreStringCommands(), txCommands(), persistenceCommands(), connectionCommands(), operatorCommands(), metaCommands()} {
+	for _, list := range [][]*Spec{stringCommands(), counterCommands(), expireCommands(), keyspaceCommands(), hashCommands(), setCommands(), moreStringCommands(), txCommands(), persistenceCommands(), flushCommands(), connectionCommands(), operatorCommands(), metaCommands()} {
 		for _, s := range list {
 			r.specs[s.Name] = s
 		}

@@ -51,6 +51,7 @@ closes the connection, so that a web page cannot talk to the server.
 | `GET` | [x] | |
 | `SET` | [x] | `NX`, `XX`, `GET`, `EX`, `PX`, `EXAT`, `PXAT` and `KEEPTTL`. A plain `SET` removes the TTL. |
 | `DEL` | [x] | Many keys are one atomic write. |
+| `FLUSHALL`, `FLUSHDB` | [x] | The same command, because there is only database 0. `ASYNC` and `SYNC` are accepted and do nothing. It is one atomic write with a range delete for each class of key, and it keeps the format record. It takes every lock, makes every `WATCH` fail, and needs `@dangerous` and the right to write every key (`~*`). It is refused inside `MULTI`. |
 | `EXISTS` | [x] | |
 | `MGET` | [x] | The reply has a size limit. |
 | `MSET` | [x] | One atomic write. |

@@ -98,10 +98,11 @@ func (p *permSet) allows(command, sub string, cats Category, keys [][]byte) bool
 	return true
 }
 
-// allKeys reports whether the set can read every key.
-func (p *permSet) allKeys() bool {
+// allKeys reports whether the set can read every key, or write every key if write
+// is true.
+func (p *permSet) allKeys(write bool) bool {
 	for _, k := range p.keys {
-		if k.read && k.pattern == "*" {
+		if k.pattern == "*" && ((write && k.write) || (!write && k.read)) {
 			return true
 		}
 	}
@@ -259,16 +260,17 @@ func (u *User) allowed(command, sub string, cats Category, keys [][]byte) bool {
 	return false
 }
 
-// allKeys reports whether the user can read every key.
-func (u *User) allKeys() bool {
+// allKeys reports whether the user can read every key, or write every key if write
+// is true.
+func (u *User) allKeys(write bool) bool {
 	if !u.enabled {
 		return false
 	}
-	if u.root.allKeys() {
+	if u.root.allKeys(write) {
 		return true
 	}
 	for i := range u.selectors {
-		if u.selectors[i].allKeys() {
+		if u.selectors[i].allKeys(write) {
 			return true
 		}
 	}
