@@ -56,7 +56,7 @@ func (c *conn) execute(args [][]byte) (reply resp.Value) {
 	start := time.Now()
 	c.client.Touch(&spec.Name, start)
 	reply = spec.Handler(s.env, c.client, args)
-	s.observe(c.client, &spec.Name, len(args)-1, start)
+	s.observe(c.client, spec, 1, len(args)-1, reply.Kind, start)
 	return reply
 }
 

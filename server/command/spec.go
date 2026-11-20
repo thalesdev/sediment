@@ -50,6 +50,10 @@ type Spec struct {
 
 	// Handler runs the command.
 	Handler Handler
+
+	// Slot is the position of the command in Registry.Specs. NewRegistry sets it,
+	// so that the server can keep a count for each command in a slice.
+	Slot int
 }
 
 // Store is the storage that the commands use. A *shale.DB is one.
@@ -353,6 +357,9 @@ func NewRegistry() *Registry {
 		for _, s := range list {
 			r.specs[s.Name] = s
 		}
+	}
+	for i, s := range r.Specs() {
+		s.Slot = i
 	}
 	return r
 }

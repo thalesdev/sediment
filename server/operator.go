@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thalesdev/sediment/resp"
 	"github.com/thalesdev/sediment/server/command"
 )
 
@@ -112,8 +113,12 @@ func (s *Server) SlowLogReset() {
 // observe records that the client ran the command name with args arguments after the
 // name from start to now. It is the one place that every command passes, and the
 // place for the slow log, and later for metrics and traces.
-func (s *Server) observe(c *command.Client, name *string, args int, start time.Time) {
+func (s *Server) observe(c *command.Client, spec *command.Spec, n int, args int, kind resp.Kind, start time.Time) {
 	took := time.Since(start)
+	if s.metrics != nil {
+		s.metrics.record(spec, int64(n), kind, took)
+	}
+	name := &spec.Name
 	if limit := s.opts.SlowLogThreshold; limit >= 0 && took >= limit {
 		s.slow.add(command.SlowEntry{At: start, Took: took, Command: *name, Args: args, Addr: c.Addr, Name: c.Info().Name})
 		s.opts.Log.Warn("slow command", "client", c.ID, "addr", c.Addr, "user", c.User, "command", *name, "us", took.Microseconds())

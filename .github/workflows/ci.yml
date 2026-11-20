@@ -22,7 +22,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache-dependency-path: compat/go.sum
+          cache-dependency-path: |
+            compat/go.sum
+            cmd/sedimentd/go.sum
       - run: make check
 
   test:
@@ -38,7 +40,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache-dependency-path: compat/go.sum
+          cache-dependency-path: |
+            compat/go.sum
+            cmd/sedimentd/go.sum
       - run: make test-full
 
   race:
@@ -50,7 +54,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache-dependency-path: compat/go.sum
+          cache-dependency-path: |
+            compat/go.sum
+            cmd/sedimentd/go.sum
       - run: make race-full
 
   compat:
@@ -62,7 +68,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache-dependency-path: compat/go.sum
+          cache-dependency-path: |
+            compat/go.sum
+            cmd/sedimentd/go.sum
       - run: make compat
 
   fuzz:
@@ -74,7 +82,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache-dependency-path: compat/go.sum
+          cache-dependency-path: |
+            compat/go.sum
+            cmd/sedimentd/go.sum
       - run: make fuzz FUZZTIME=10s
 
   coverage:
@@ -86,7 +96,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache-dependency-path: compat/go.sum
+          cache-dependency-path: |
+            compat/go.sum
+            cmd/sedimentd/go.sum
       - run: go test -short -covermode=atomic -coverprofile=coverage.out ./...
       - uses: codecov/codecov-action@v5
         with:

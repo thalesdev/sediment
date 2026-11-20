@@ -26,6 +26,8 @@ type Server struct {
 	set  *command.Spec
 	slow slowLog
 
+	metrics *instruments
+
 	mu        sync.Mutex
 	listeners map[net.Listener]struct{}
 	conns     map[*conn]struct{}
@@ -96,6 +98,10 @@ func New(o Options) (*Server, error) {
 		MaxAuthFailures: o.MaxAuthFailures,
 		AuthLimit:       limit,
 		Health:          health,
+	}
+	var err error
+	if s.metrics, err = newMetrics(o.Meter, reg.Specs(), s); err != nil {
+		return nil, err
 	}
 	return s, nil
 }

@@ -118,3 +118,15 @@ var dummy = func() password {
 	p := password{iterations: Iterations, salt: make([]byte, saltSize), sum: make([]byte, hashSize)}
 	return p
 }()
+
+// CheckHash reports whether pw is the password of hash, which is a hash that
+// HashPassword wrote. It returns an error if hash is not one. It is for the
+// settings of the server that hold a hash, such as the sign in of the metrics
+// endpoint.
+func CheckHash(hash string, pw []byte) (bool, error) {
+	p, err := parsePassword(hash)
+	if err != nil {
+		return false, err
+	}
+	return p.verify(pw), nil
+}

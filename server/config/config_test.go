@@ -65,6 +65,36 @@ func TestParse(t *testing.T) {
 		}
 	})
 
+	t.Run("Should read the settings of the metrics", func(t *testing.T) {
+		c, err := parse(t, "metrics-addr 127.0.0.1:9121\notlp-metrics yes\notlp-interval 15\n")
+		if err != nil || c.MetricsAddr != "127.0.0.1:9121" || !c.OTLPMetrics || c.OTLPInterval != 15*time.Second || c.Validate() != nil {
+			t.Fatalf("got %+v, %v", c, err)
+		}
+		if _, err := parse(t, "metrics-addr nonsense\n"); err == nil {
+			t.Fatal("an address with no port was accepted")
+		}
+	})
+
+	t.Run("Should need TLS and a sign in for a metrics address that other machines reach", func(t *testing.T) {
+		c, _ := parse(t, "metrics-addr 0.0.0.0:9121\n")
+		if c.Validate() == nil {
+			t.Fatal("accepted with no TLS and no sign in")
+		}
+		c, _ = parse(t, "metrics-addr 0.0.0.0:9121\ntls-cert-file a\ntls-key-file b\n")
+		if c.Validate() == nil {
+			t.Fatal("accepted with no sign in")
+		}
+		c, _ = parse(t, "metrics-addr 0.0.0.0:9121\ntls-cert-file a\ntls-key-file b\nmetrics-user u\nmetrics-password-hash h\n")
+		if err := c.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		for _, addr := range []string{"127.0.0.1:1", "[::1]:1", "localhost:1"} {
+			if c, _ = parse(t, "metrics-addr "+addr+"\n"); c.MetricsExposed() || c.Validate() != nil {
+				t.Fatalf("%s is exposed", addr)
+			}
+		}
+	})
+
 	t.Run("Should refuse unknown keys and bad values", func(t *testing.T) {
 		for _, text := range []string{
 			"tls-cert-fil /x\n", "port 0\n", "port 70000\n", "port abc\n", "sync maybe\n", "timeout -1\n", "read-timeout 0\n",

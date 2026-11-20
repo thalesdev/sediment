@@ -107,6 +107,26 @@ type Config struct {
 	// needs tls-ca-cert-file and aclfile. The default is false.
 	TLSAuthClientsUser bool
 
+	// MetricsAddr is the address of the HTTP endpoint with the metrics in the
+	// Prometheus format, host:port. If it is empty, the endpoint is off. It is the
+	// only HTTP port of the server. An address that other machines reach needs TLS,
+	// MetricsUser and MetricsPasswordHash.
+	MetricsAddr string
+
+	// MetricsUser and MetricsPasswordHash are the sign in of the endpoint of the
+	// metrics, which uses HTTP basic authentication. The hash is the one that
+	// sedimentd hash-password prints.
+	MetricsUser, MetricsPasswordHash string
+
+	// OTLPMetrics sends the metrics with OTLP over HTTP. The endpoint, the headers
+	// and the TLS settings are the standard OTEL_EXPORTER_OTLP environment
+	// variables. The default is false.
+	OTLPMetrics bool
+
+	// OTLPInterval is the time between two exports of the metrics. The default is
+	// 60 seconds.
+	OTLPInterval time.Duration
+
 	// InsecureBind allows an address that is not loopback with no TLS and no
 	// sign in. The default is false.
 	InsecureBind bool
@@ -121,7 +141,7 @@ type Config struct {
 // Defaults returns the default settings: loopback only, port 6379, no TLS, no
 // users.
 func Defaults() Config {
-	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", MemtableSize: 64 << 20, BlockCacheSize: 64 << 20, LogLevel: "info", LogFormat: "text", SlowLogSlowerThan: 10000, SlowLogMaxLen: 128, AuthFailLimit: 20, AuthFailWindow: time.Minute}
+	return Config{Bind: []string{"127.0.0.1"}, Port: 6379, Dir: "data", MemtableSize: 64 << 20, BlockCacheSize: 64 << 20, LogLevel: "info", LogFormat: "text", OTLPInterval: time.Minute, SlowLogSlowerThan: 10000, SlowLogMaxLen: 128, AuthFailLimit: 20, AuthFailWindow: time.Minute}
 }
 
 // Parse reads a file of "key value" lines into c. A line that is empty or that
@@ -208,6 +228,21 @@ func (c *Config) Set(key string, v []string) error {
 		c.ACLFile = val
 	case "tls-auth-clients-user":
 		return setBool(&c.TLSAuthClientsUser, key, val)
+	case "metrics-addr":
+		if val != "" {
+			if _, _, err := net.SplitHostPort(val); err != nil {
+				return errors.New("metrics-addr must be host:port")
+			}
+		}
+		c.MetricsAddr = val
+	case "metrics-user":
+		c.MetricsUser = val
+	case "metrics-password-hash":
+		c.MetricsPasswordHash = val
+	case "otlp-metrics":
+		return setBool(&c.OTLPMetrics, key, val)
+	case "otlp-interval":
+		return setSeconds(&c.OTLPInterval, key, val, false)
 	case "insecure-bind":
 		return setBool(&c.InsecureBind, key, val)
 	case "loglevel":
@@ -302,12 +337,34 @@ func (c Config) Validate() error {
 	if c.TLSAuthClientsUser && (c.TLSCA == "" || c.ACLFile == "") {
 		return errors.New("tls-auth-clients-user needs tls-ca-cert-file and aclfile")
 	}
+	if c.MetricsAddr != "" && c.MetricsExposed() {
+		if !c.TLSEnabled() {
+			return errors.New("metrics-addr reaches other machines, so it needs tls-cert-file and tls-key-file")
+		}
+		if c.MetricsUser == "" || c.MetricsPasswordHash == "" {
+			return errors.New("metrics-addr reaches other machines, so it needs metrics-user and metrics-password-hash")
+		}
+	}
 	for _, b := range c.Bind {
 		if b == "" {
 			return errors.New("an empty bind address")
 		}
 	}
 	return nil
+}
+
+// MetricsExposed reports whether the address of the metrics endpoint can be reached
+// from another machine. Only 127.0.0.0/8, ::1 and the name localhost cannot.
+func (c Config) MetricsExposed() bool {
+	host, _, err := net.SplitHostPort(c.MetricsAddr)
+	if err != nil {
+		return true
+	}
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip == nil || !ip.IsLoopback()
 }
 
 // Exposed reports whether any bind address can be reached from another machine.

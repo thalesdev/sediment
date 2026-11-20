@@ -43,6 +43,8 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/thalesdev/sediment/internal/shale"
 	"github.com/thalesdev/sediment/resp"
 	"github.com/thalesdev/sediment/server"
@@ -333,6 +335,20 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		}
 	}()
 
+	tel, err := setupTelemetry(context.Background(), cfg, version)
+	if err != nil {
+		return fmt.Errorf("metrics: %w", err)
+	}
+	var meter metric.Meter
+	if tel != nil {
+		meter = tel.meter
+		defer func() {
+			if err := tel.shutdown(context.Background()); err != nil {
+				log.Error("metrics shutdown", "err", err)
+			}
+		}()
+	}
+
 	loading := server.NewLoading()
 	stopLoading := sync.OnceFunc(loading.Close)
 	defer stopLoading()
@@ -367,6 +383,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		Store:            db,
 		Access:           access,
 		Limits:           resp.Limits{MaxBulk: cfg.MaxBulk, MaxArgs: cfg.MaxArgs},
+		Meter:            meter,
 		CertUser:         cfg.TLSAuthClientsUser,
 		MaxClients:       cfg.MaxClients,
 		SlowLogThreshold: slowLogThreshold(cfg.SlowLogSlowerThan),
@@ -395,6 +412,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	for _, l := range listeners {
 		log.Info("listening", "addr", l.Addr().String(), "tls", tlsCfg != nil, "mtls", cfg.TLSCA != "", "users", access != nil, "version", version)
+	}
+
+	if tel != nil && tel.handler != nil {
+		stopMetrics, err := startMetrics(cfg, tel.handler, tlsCfg, log)
+		if err != nil {
+			return fmt.Errorf("metrics endpoint: %w", err)
+		}
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = stopMetrics(ctx)
+		}()
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

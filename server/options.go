@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/thalesdev/sediment/resp"
 	"github.com/thalesdev/sediment/server/command"
 )
@@ -95,6 +97,12 @@ type Options struct {
 	// MaxAuthFailures is the number of failed sign ins after which the server
 	// closes the connection. The default is 5.
 	MaxAuthFailures int
+
+	// Meter makes the metrics of the server: the commands by name and result, their
+	// latency, the clients, and the counts of the storage. It can be nil, and then the
+	// server keeps no metric and pays nothing. Only the OpenTelemetry API is
+	// imported here, so the caller links the SDK that it wants.
+	Meter metric.Meter
 
 	// CertUser makes a client that presents a certificate sign in as the user that
 	// is named like the common name of the certificate, if that user has the rule

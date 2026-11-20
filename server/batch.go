@@ -5,6 +5,7 @@ package server
 import (
 	"time"
 
+	"github.com/thalesdev/sediment/resp"
 	"github.com/thalesdev/sediment/server/command"
 )
 
@@ -60,7 +61,7 @@ func (c *conn) batchSets(first [][]byte) (carry [][]byte, readErr error, written
 	start := time.Now()
 	c.client.Touch(&c.s.set.Name, start)
 	replies := command.SetMany(c.s.env, cmds)
-	c.s.observe(c.client, &c.s.set.Name, 2*len(cmds), start)
+	c.s.observe(c.client, c.s.set, len(cmds), 2*len(cmds), resp.KindSimple, start)
 	c.s.totalCommands.Add(uint64(len(cmds)))
 	c.s.setBatches.Add(1)
 	c.s.setBatched.Add(uint64(len(cmds)))
